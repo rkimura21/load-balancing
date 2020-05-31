@@ -111,8 +111,8 @@ int main(int argc, char *argv[])
   else get = &getExponentialPacket;
 
   // route to parallel/serial code
-  if (parallel) executeParallel(packetSource, T, n, get);
-  else executeSerial(packetSource, T, n, D, L, S, get);
+  if (parallel) executeParallel(packetSource, T, n, D, L, S, get);
+  else executeSerial(packetSource, T, n, get);
 
   // output final packet counts
 
@@ -183,9 +183,8 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
   for (i = 0; i < n; i++) {
     if (strcmp(L, "tas") == 0)
       locksArr[i]->tas = initTAS(); // need to allocate space for union itself too?
-    else if (strcmp(L, "anderson") == 0)
+    else
       locksArr[i]->anderson = initAnderson(power2Ceil(n));
-    else printf("%s: ruh roh!\n", prog);
   }
 
   // specify strategy for picking a queue
@@ -194,10 +193,8 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
     workerRoutine = &routineLockFree;
   else if (strcmp(S, "homeQueue") == 0)
     workerRoutine = &routineHomeQueue;
-  else if (strcmp(S, "awesome") == 0)
+  else
     workerRoutine = &routineAwesome;
-  else printf("%s: uh oh!\n", prog);
-  }
 						
   // spawn threads
   startTimer(timer);
