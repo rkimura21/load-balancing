@@ -4,14 +4,14 @@
 #include "utils/packetsource.h"
 
 typedef struct {
-  volatile int depth;
   volatile Packet_t **buffer;
+  volatile unsigned int depth;
   volatile int head;
   volatile int tail;
 } queue_t;
 
 int mod(int x, int y);
-queue_t * initQueue(int depth);
+queue_t * initQueue(unsigned int depth);
 int enqueue(queue_t *queue, volatile Packet_t *packet);
 volatile Packet_t * dequeue(queue_t *queue);
 void freeQueue(queue_t *queue);

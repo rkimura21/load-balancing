@@ -6,7 +6,7 @@
 // returns x % y (y must be a positive power of 2)
 int mod (int x, int y) { return (x & (y - 1)); }
 
-queue_t * initQueue(int depth)
+queue_t * initQueue(unsigned int depth)
 {
   queue_t * queue = malloc(sizeof(Queue_t));
   queue->buffer = malloc(depth * sizeof(volatile Packet_t *));

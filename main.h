@@ -14,6 +14,7 @@ typedef struct {
   int numPackets;
   char *lockType;
   FILE *fp;
+  volatile long inc; // for counter-based tests
 } metadata_t;
 
 unsigned int power2Ceil(unsigned int n);
