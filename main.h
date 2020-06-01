@@ -12,9 +12,10 @@
 typedef struct {
   int tid;
   int numPackets;
+  int processed;
   char *lockType;
   FILE *fp;
-  volatile long inc; // for counter-based tests
+  long inc; // for counter-based tests
 } metadata_t;
 
 unsigned int power2Ceil(unsigned int n);

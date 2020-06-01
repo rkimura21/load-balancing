@@ -46,85 +46,141 @@ float getVariance(long arr[], int n)
 
 float getStdDev(long arr[], int n) { return sqrt(getVariance(arr, n)); }
 
-void parallelTest()
+void parallelTest(unsigned int n, long W, unsigned int T, int seed)
 {
-  int i, j, err;
-  FILE *fp1, *fp2;
+  int i, j, matching = 0;
+  long pCount;
+  FILE *fp;
   pid_t childPid;
-  const char *loads[3] = { "constant", "uniform", "exponential" };
-  const char *fileNames[3] = { "out_serial.txt", "out_serialQueue.txt", "out_parallel.txt" };
-
-  printf("performing corroborateSeedTest(nThreads = %d, nPackets = %d, depth = %d, mean = %ld, ",
-	 nThreads, nPackets, depth, mean);
-  printf("seed = %d)\n", seed);
-
-  // generate checksum outputs (for all combos of load distr and code version)
+  char fileStr[128];
+  
   if (access("main", F_OK|X_OK)) {
-    fprintf(stderr, "error: 'main' file does not exist in current dir, or is not executable\n");
+    fprintf(stderr, "%s: 'main' file does not exist in current dir, or is not executable\n", prog);
+    exit(1);
   } else {
-    char nStr[10]; char tStr[10]; char dStr[10]; char wStr[20]; char sStr[10]; char vStr[10];
-    sprintf(nStr, "%d", nThreads); sprintf(tStr, "%d", nPackets); sprintf(dStr, "%d", depth);
-    sprintf(wStr, "%ld", mean); sprintf(sStr, "%d", seed);
-    for (i = 0; i < 3; i++) {
-      sprintf(vStr, "%d", i);
-      for (j = 0; j < 3; j++) {
+    char nStr[10], char wStr[10]; char tStr[10]; char sStr[10];
+    sprintf(nStr, "%u" n); sprintf(wStr, "%ld", W); sprintf(tStr, "%u", T); sprintf(sStr,"%d", seed);
+    for (i = 0; i < 2; i++) { // uniform or exponential
+      for (j = 0; j < 2; j++) { // serial or parallel
 	childPid = fork();
 	if (childPid == 0) {
-	  execlp("./main", "main", "-n", nStr, "-T", tStr, "-D", dStr, "-W", wStr,
-		 "-l", loads[j], "-s", sStr, "-V", vStr, "-o", (char *) NULL);
+	  execlp("./main", "main", "-n", nStr, "-W", wStr, "-T", tStr, "-s", sStr,
+		 "-M", "2000", i == 0 ? "-u" : "", "-S", "lockFree", "-o", "1", j == 1 ? "-p" : "",
+		 verbose ? "-v" : "", (char *) NULL);
 	} else if (childPid < 0) {
-	  printf("error: fork failed!\n");
+	  fprintf(stderr, "%s: fork failed!\n", prog); exit(1);
 	} else {
 	  int rc;
 	  waitpid(childPid, &rc, 0);
-	  if (rc == 0 && verbose) printf("child process terminated successfully\n");
-	  if (rc == 1) printf("child process terminated with an error!\n");
+	  if (rc == 1) {
+	    fprintf(stderr, "%s: child process terminated with an error!\n", prog); exit(1);
+	  }
 	}
       }
     }
   }
 
-  // compare serialQueue to serial output
-  if ((fp1 = fopen(fileNames[0], "r")) == NULL) {
-    fprintf(stderr, "%s: can't open out_serial.txt\n", prog);
+  // compare packet count per source (for every version x distribution combo)
+  i = 0; long pCounts[2][2][n]; // arr[distr][version][n]
+  if ((fp = fopen("out_parallelCheck.txt", "r")) == NULL) {
+    fprintf(stderr, "%s: can't open out_parallelCheck.txt\n", prog);
     exit(1);
-  } else if ((fp2 = fopen(fileNames[1], "r")) == NULL) {
-    fprintf(stderr, "%s: can't open out_serialQueue.txt\n", prog);
-    exit(1);
+  } while (!feof(fp)) {
+    if (fgets(fileStr, sizeof(fileStr), fp) != NULL) {
+      sscanf(fileStr, "%ld", &pCount);
+      pCounts[i / (2 * n)][i / n % 2][i % n] = pCount;
+      i++;
+    }
   }
-  if ((err = compareFiles(fp1, fp2))) {
-    fprintf(stderr, "%s: %d discrepancies found between serial and serialQueue output\n",
-	    prog, err);
-    exit(1);
-  }
-
-  // compare parallel to serialQueue output
-  if ((fp1 = fopen(fileNames[1], "r")) == NULL) {
-    fprintf(stderr, "%s: can't open out_serialQueue.txt\n", prog);
-    exit(1);
-  } else if ((fp2 = fopen(fileNames[2], "r")) == NULL) {
-    fprintf(stderr, "%s: can't open out_parallel.txt\n", prog);
-    exit(1);
-  }
-  if ((err = compareFiles(fp1, fp2))) {
-    fprintf(stderr, "%s: %d char discrepancies found between serialQueue and parallel output\n",
-	    prog, err);
-    exit(1);
+  fclose(fp);
+ 
+  long uniCounts[2][n] = pCounts[0];
+  long expCounts[2][n] = pCounts[1];
+  for (i = 0; i < n; i++) {
+    if (uniCounts[0][i] != uniCounts[1][i]) break;
+    if (expCounts[0][i] != expCounts[1][i]) break;
+    matching++;
   }
 
-  fclose(fp1);
-  fclose(fp2);
-
-  for (i = 0; i < 3; i++) {
-    if (remove(fileNames[i]))
-      fprintf(stderr, "%s: unable to delete %s\n", prog, fileNames[i]);
-  }
-
-  printf("corroborateSeedTest has passed successfully!\n");
+  if (remove("out_parallelCheck.txt"))
+    fprintf(stderr, "%s: unable to delete out_parallelCheck.txt\n", prog);
+  printf("%s: parallelCheckTest(n = %u, T = %u, W = %ld, seed = %d) has %s!\n",
+	 prog, n, T, W, seed, matching == n ? "PASSED" : "FAILED");
 }
 
-void strategyTest()
+void strategyTest(unsigned int n, long W, unsigned int T, int seed, char *S)
 {
+  int i, j, k, matching = 0;
+  long pCount;
+  FILE *fp;
+  pid_t childPid;
+  char fileStr[128];
+  
+  if (strcmp(S, "lockFree") == 0) {
+    fprintf(stderr, "%s: choose strategy other than 'lockFree' to avoid redundancy\n", prog);
+    exit(1);
+  }
+
+  if (access("main", F_OK|X_OK)) {
+    fprintf(stderr, "%s: 'main' file does not exist in current dir, or is not executable\n", prog);
+    exit(1);
+  } else {
+    char nStr[10], char wStr[10]; char tStr[10]; char sStr[10];
+    sprintf(nStr, "%u" n); sprintf(wStr, "%ld", W); sprintf(tStr, "%u", T); sprintf(sStr,"%d", seed);
+    for (i = 0; i < 2; i++) { // strategy (lockFree or S)
+      for (j = 0; j < 2; j++) { // distribution (uniform or exponential)
+	for (k = 0; k < 2; k++) { // lock type (tas or anderson)
+	  childPid = fork();
+	  if (childPid == 0) {
+	    execlp("./main", "main", "-n", nStr, "-W", wStr, "-T", tStr, "-s", sStr, "-M", "2000",
+		   "-S", i == 1 ? S : "lockFree", i == 0 ? "-u" : "", "-L",
+		   k == 0 ? "tas" : "anderson", "-p", verbose ? "-v" : "", "-o", "2", (char *) NULL);
+	  } else if (childPid < 0) {
+	    fprintf(stderr, "%s: fork failed!\n", prog); exit(1);
+	  } else {
+	    int rc;
+	    waitpid(childPid, &rc, 0);
+	    if (rc == 1) {
+	      fprintf(stderr, "%s: child process has terminated with an error!\n", prog); exit(1);
+	    }
+	  }
+	}
+      }
+    }
+  }
+    
+  // compare packet count per source (for every S x L x distribution combo)
+  i = 0; long pCounts[2][2][2][n]; // arr[S][distr][L][n]
+  if ((fp = fopen("out_strategyCheck.txt", "r")) == NULL) {
+    fprintf(stderr, "%s: can't open out_parallelCheck.txt\n", prog);
+    exit(1);
+  } while (!feof(fp)) {
+    if (fgets(fileStr, sizeof(fileStr), fp) != NULL) {
+      sscanf(fileStr, "%ld", &pCount);
+      pCounts[i / (4 * n)][i / (2 * n) % 2][i / n % 2][i % n] = pCount;
+      i++;
+    }
+  }
+  fclose(fp);
+
+  int broke = 0;
+  long lFreeCounts[2][2][n] = pCounts[0];
+  long otherCounts[2][2][n] = pCounts[1]; // for input S
+  for (i = 0; i < 2; i++) { // distribution (uniform or exponential)
+    long lFreeDistrCounts[2][n] = lFreeCounts[i];
+    long otherDistrCounts[2][n] = otherCounts[i];
+    for (j = 0; j < n; j++) {
+      if (lFreeDistrCounts[0][j] != otherDistrCounts[0][j]) { break; broke = 1; }
+      if (lFreeDistrCounts[1][j] != otherDistrCounts[1][j]) { break; broke = 1; }
+      matching++;
+    }
+    if (broke) break;
+  }  
+
+  if (remove("out_strategyCheck.txt"))
+    fprintf(stderr, "%s: unable to delete out_strategyCheck.txt\n", prog);
+  printf("%s: strategyCheckTest(n = %u, T = %u, W = %ld, seed = %d, S = %s) has %s!\n",
+	 prog, n, T, W, seed, S, matching == n * 2 ? "PASSED" : "FAILED");
 }
 
 void timedParallelTest()
@@ -185,6 +241,7 @@ void countingTest(long B, int n, char *L)
 
   if (access("main", F_OK|X_OK)) {
     fprintf(stderr, "%s: 'main' file does not exist in current dir, or is not executable\n", prog);
+    exit(1);
   } else {
     char bStr[10]; char nStr[10];
     sprintf(bStr, "%ld", B); sprintf(nStr, "%d", n);
@@ -229,6 +286,7 @@ void contiguityTest(long B, int n, char *L)
 
   if (access("main", F_OK|X_OK)) {
     fprintf(stderr, "%s: 'main' file does not exist in current dir, or is not executable\n", prog);
+    exit(1);
   } else {
     char bStr[10]; char nStr[10];
     sprintf(bStr, "%ld", B); sprintf(nStr, "%d", n);
@@ -275,13 +333,9 @@ void orderingTest(long B, int n)
   pid_t c1, c2;
   char fileStr[128];
 
-  if (strcmp(L, "anderson") == 0) {
-    fprintf(stderr, "%s: choose non-queue based lock to avoid redundancy\n", prog);
-    exit(1);
-  }
-
   if (access("main", F_OK|X_OK)) {
     fprintf(stderr, "%s: 'main' file does not exist in current dir, or is not executable\n", prog);
+    exit(1);
   } else {
     char bStr[10]; char nStr[10];
     sprintf(bStr, "%ld", B); sprintf(nStr, "%d", n);

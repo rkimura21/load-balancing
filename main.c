@@ -34,6 +34,7 @@ int main(int argc, char *argv[])
   long W = 1;
   int seed = 1, uniform = 0, parallel = 0;
   char *L = NULL, *S = NULL;
+  FILE *fp = NULL;
   int mFlag = 0, nFlag = 0, wFlag = 0, lFlag = 0, sFlag = 0, tFlag = 0;
   char usage[400] = "usage %s: -M <numMilliseconds> -n <numSources> -W <mean> -L <lockType> ";
   strcat(usage, "-S <strategy> -T <numPackets> [-D <queueDepth>] [-s <seed>] [-u] [-p] [-v]\n");
@@ -102,12 +103,13 @@ int main(int argc, char *argv[])
     fprintf(stderr, "%s: -L (lockType) and/or -S (strategy) values are missing\n", prog);
     fprintf(stderr, okString, prog);
     exit(1);
-  } else if (parallel && (strcmp(L, "tas") != 0 && strcmp(L, "anderson") != 0)) {
-    fprintf(stderr, "%s: L (lockType) value must be 'tas' or 'anderson'\n", prog);
-    exit(1);
   } else if (parallel && (strcmp(S, "lockFree") != 0 &&
-			  strcmp(L, "homeQueue") != 0 && strcmp(s, "awesome") != 0)) {
+			  strcmp(S, "homeQueue") != 0 && strcmp(s, "awesome") != 0)) {
     fprintf(stderr, "%s: S (strategy) value must be 'lockFree', 'homeQueue', or 'awesome'\n", prog);
+    exit(1);
+  } else if (parallel && (strcmp(S, "homeQueue") == 0 || strcmp(S, "awesome") == 0) &&
+	     (strcmp(L, "tas") != 0 && strcmp(L, "anderson") != 0)) {
+    fprintf(stderr, "%s: L (lockType) value must be 'tas' or 'anderson'\n", prog);
     exit(1);
   } else if ((/* output is a counter-based test */) && B < 1) {
     fprintf(stderr, "%s: -B (big) must be greater than 0\n", prog);
@@ -124,11 +126,22 @@ int main(int argc, char *argv[])
   else get = &getExponentialPacket;
 
   // route to parallel/serial code
-  if (parallel) executeParallel(packetSource, T, n, D, L, S, get);
+  if (output >= 6 && output <= 8) parallelCounter(n, L);
+  else if (parallel) executeParallel(packetSource, T, n, D, L, S, get);
   else executeSerial(packetSource, T, n, get);
 
   // output final packet counts
+  if (output == 1 || output == 2) {
+    snprintf(fileStr, sizeof(fileStr), "out_%s.txt", tests[output-1]);
+    fp = open(fileStr, "a");
+    for (i = 0; i < n; i++) {
+      if (uniform) sprintf(fileStr, "%ld\n", getUniformCount(packetSource, i));
+      else sprintf(fileStr, "%ld\n", getExponentialCount(packetSource, i));
+      fputs(fileStr, fp);
+    }
+  }
 
+  if (fp != NULL) fclose(fp);
   deletePacketSource(packetSource);
   free(timer);
   return 0;
@@ -240,7 +253,7 @@ void executeSerial(PacketSource_t *packetSource, unsigned int T, unsigned int n,
 
   if (verbose) printf("serial execution complete (time = %f msec)\n", getElapsedTime(timer));
   
-  if (output >= 4 || output <= 7) { // we'll need to change this to throughput-based
+  if (output >= 4 && output <= 7) { // we'll need to change this to throughput-based
     FILE *fp = NULL;
     snprintf(fileStr, sizeof(fileStr), "out_%s.txt", tests[output-1]);
     fp = fopen(fileStr, "a");
@@ -284,6 +297,7 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
   for (i = 0; i < n; i++) {
     args[i].tid = i;
     args[i].numPackets = T;
+    args[i].processed = 0;
     args[i].lockType = L;
     args[i].fp = fp;
     rc = pthread_create(&threads[i], NULL, workerRoutine, (void *)(args+i));
