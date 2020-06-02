@@ -18,17 +18,16 @@ typedef union {
   anderson_t *anderson;
 } locks_t;
 
-
 tas_t * initTAS();
 void acquireTAS(tas_t *lock);
 void releaseTAS(tas_t *lock);
-void freeLock(tas_t *lock);
+void freeTAS(tas_t *lock);
 
 anderson_t * initAnderson(int capacity);
 void acquireAnderson(anderson_t *lock, int *mySlot);
 void releaseAnderson(anderson_t *lock, int mySlot);
 void freeAnderson(anderson_t *lock);
-int mod(int x, int y);
+int modL(int x, int y);
 
 #endif
 

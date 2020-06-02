@@ -10,7 +10,7 @@ typedef struct {
   volatile int tail;
 } queue_t;
 
-int mod(int x, int y);
+int modQ(int x, int y);
 queue_t * initQueue(unsigned int depth);
 int enqueue(queue_t *queue, volatile Packet_t *packet);
 volatile Packet_t * dequeue(queue_t *queue);

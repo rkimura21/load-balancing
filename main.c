@@ -7,16 +7,15 @@
 
 #include "main.h"
 
-StopWatch_t *timer;
 static unsigned int M;
 static long B;
 static int verbose;
 static int output;
 static char *prog;
 static char fileStr[128];
-queue_t *queueArr;
-locks_t *locksArr;
-static locks_t counterLock;
+queue_t **queueArr;
+locks_t **locksArr;
+static locks_t *counterLock;
 volatile int active;
 volatile long count;
 char *tests[12] = { "parallelCheck", "strategyCheck", "timedParallel", "timedStrategy", "queue",
@@ -29,9 +28,9 @@ int main(int argc, char *argv[])
   prog = argv[0];
   verbose = 0, output = 0;
   M = 2000, B = 0, count = 0;
-  int c, err = 0;
-  unsigned int n = 1, T = 1, D = 8;
-  long W = 1;
+  int i, c, err = 0;
+  unsigned int n = 1, D = 8;
+  long W = 1, T = 1;
   int seed = 1, uniform = 0, parallel = 0;
   char *L = NULL, *S = NULL;
   FILE *fp = NULL;
@@ -40,11 +39,10 @@ int main(int argc, char *argv[])
   strcat(usage, "-S <strategy> -T <numPackets> [-D <queueDepth>] [-s <seed>] [-u] [-p] [-v]\n");
   char defaults[200] = "defaults: D = 8, seed = 1, uniform = false, parallel = false\n";
   char okString[200] = "lockType = { 'tas', 'anderson' } ";
-  stract(okString, "strategy = { 'lockFree', 'homeQueue', 'awesome' }\n");
-  timer = malloc(sizeof(StopWatch_t));
-  
+  strcat(okString, "strategy = { 'lockFree', 'homeQueue', 'awesome' }\n");
+    
   // retrieve command-line arguments
-  while ((c = getopt(argc, argv "M:n:W:us:D:L:S:T:B:pvo:")) != -1)
+  while ((c = getopt(argc, argv, "M:n:W:us:D:L:S:T:B:pvo:")) != -1)
     switch(c) {
     case 'M':
       mFlag = 1; sscanf(optarg, "%u", &M); break;
@@ -59,9 +57,9 @@ int main(int argc, char *argv[])
     case 'D':
       sscanf(optarg, "%u", &D); break;
     case 'L':
-      lFlag = 1; sscanf(optarg, "%s", &L); break;
+      lFlag = 1; L = optarg; break;
     case 'S':
-      sFlag = 1; sscanf(optarg, "%s", &S); break;
+      sFlag = 1; S = optarg; break;
     case 'T':
       tFlag = 1; sscanf(optarg, "%ld", &T); break;
     case 'B':
@@ -104,14 +102,14 @@ int main(int argc, char *argv[])
     fprintf(stderr, okString, prog);
     exit(1);
   } else if (parallel && (strcmp(S, "lockFree") != 0 &&
-			  strcmp(S, "homeQueue") != 0 && strcmp(s, "awesome") != 0)) {
+			  strcmp(S, "homeQueue") != 0 && strcmp(S, "awesome") != 0)) {
     fprintf(stderr, "%s: S (strategy) value must be 'lockFree', 'homeQueue', or 'awesome'\n", prog);
     exit(1);
   } else if (parallel && (strcmp(S, "homeQueue") == 0 || strcmp(S, "awesome") == 0) &&
 	     (strcmp(L, "tas") != 0 && strcmp(L, "anderson") != 0)) {
     fprintf(stderr, "%s: L (lockType) value must be 'tas' or 'anderson'\n", prog);
     exit(1);
-  } else if ((/* output is a counter-based test */) && B < 1) {
+  } else if ((output >= 6 && output <= 8) && B < 1) {
     fprintf(stderr, "%s: -B (big) must be greater than 0\n", prog);
     exit(1);
   } else if (err) {
@@ -133,7 +131,7 @@ int main(int argc, char *argv[])
   // output final packet counts
   if (output == 1 || output == 2) {
     snprintf(fileStr, sizeof(fileStr), "out_%s.txt", tests[output-1]);
-    fp = open(fileStr, "a");
+    fp = fopen(fileStr, "a");
     for (i = 0; i < n; i++) {
       if (uniform) sprintf(fileStr, "%ld\n", getUniformCount(packetSource, i));
       else sprintf(fileStr, "%ld\n", getExponentialCount(packetSource, i));
@@ -143,7 +141,6 @@ int main(int argc, char *argv[])
 
   if (fp != NULL) fclose(fp);
   deletePacketSource(packetSource);
-  free(timer);
   return 0;
 }
 
@@ -166,11 +163,11 @@ void parallelCounter(unsigned int n, char *L)
   FILE *fp = NULL;
   pthread_t *threads = malloc(n * sizeof(pthread_t));
   metadata_t *args = malloc(n * sizeof(metadata_t));
-  counterLock = malloc(sizeof(locks_t));
+  //counterLock = malloc(sizeof(locks_t));
   
   // set up appropriate lock
-  if (strcmp(L, "tas") == 0) counterLock.tas = initTAS();
-  else counterLock.anderson = initAnderson(power2Ceil(n));    
+  if (strcmp(L, "tas") == 0) counterLock->tas = initTAS();
+  else counterLock->anderson = initAnderson(power2Ceil(n));    
 
   if (output == 8) { // for ordering test
     snprintf(fileStr, sizeof(fileStr), "out_%s.txt", tests[output-1]);
@@ -178,7 +175,6 @@ void parallelCounter(unsigned int n, char *L)
   }
 
   // spawn threads
-  startTimer(timer);
   for (i = 0; i < n; i++) {
     args[i].tid = i;
     args[i].inc = 0;
@@ -197,12 +193,12 @@ void parallelCounter(unsigned int n, char *L)
   do {
     __sync_synchronize();
   } while (active);
-  stopTimer(timer);
   if (verbose) printf("in parallelCounter: all threads finished! preparing to free memory...\n");
 
   // free lock
-  if (strcmp(L, "tas") == 0) freeTAS(counterLock.tas);
-  else freeAnderson(counterLock.anderson);
+  if (strcmp(L, "tas") == 0) freeTAS(counterLock->tas);
+  else freeAnderson(counterLock->anderson);
+  //free(counterLock);
 
   // output relevant information for specified counter-based test
   if (output != -1) {
@@ -223,9 +219,7 @@ void parallelCounter(unsigned int n, char *L)
     if (verbose) printf("%s: no counter-based test was being run\n", prog);
   }
 
-  if (verbose) {
-    printf("%s: %d thread %s lock parallel counter to B = %ld complete (time = %f msec)\n",
-	   prog, n, L, B, getElapsedTime(timer));
+  if (verbose) {;
     for (i= 0; i < n; i++)
       printf("%s: thread %d's increment count = %ld\n", prog, i, args[i].inc);
   }
@@ -240,7 +234,6 @@ void executeSerial(PacketSource_t *packetSource, unsigned int T, unsigned int n,
 {
   int i, j;
 
-  startTimer(timer);
   for (i = 0; i < T; i++) {
     for (j = 0; j < n; j++) {
       volatile Packet_t *packet = (*get)(packetSource, j);
@@ -249,15 +242,14 @@ void executeSerial(PacketSource_t *packetSource, unsigned int T, unsigned int n,
       free((void *)packet);
     }
   }
-  stopTimer(timer);
-
-  if (verbose) printf("serial execution complete (time = %f msec)\n", getElapsedTime(timer));
+  
+  if (verbose) printf("serial execution complete (time = %f msec)\n", 0.0);
   
   if (output >= 4 && output <= 7) { // we'll need to change this to throughput-based
     FILE *fp = NULL;
     snprintf(fileStr, sizeof(fileStr), "out_%s.txt", tests[output-1]);
     fp = fopen(fileStr, "a");
-    sprintf(fuleStr, "%f\n", getElapsedTime(timer));
+    sprintf(fileStr, "%f\n", 0.0);
     fputs(fileStr, fp);
     fclose(fp);
   }
@@ -270,8 +262,8 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
   int i, j, rc;
   FILE *fp = NULL;
   active = n;
-  queueArr = malloc(sizeof(queue_t) * n);
-  locksArr = malloc(sizeof(locks_t) * n);
+  queueArr = malloc(sizeof(queue_t *) * n);
+  locksArr = malloc(sizeof(locks_t *) * n);
   pthread_t *threads = malloc(sizeof(pthread_t) * n);
   metadata_t *args = malloc(sizeof(metadata_t) * n);
     
@@ -279,8 +271,8 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
   for (i = 0; i < n; i++)
     queueArr[i] = initQueue(D);
   for (i = 0; i < n; i++) {
-    if (strcmp(L, "tas") == 0) locksArr[i].tas = initTAS();
-    else locksArr[i].anderson = initAnderson(power2Ceil(n));
+    if (strcmp(L, "tas") == 0) locksArr[i]->tas = initTAS();
+    else locksArr[i]->anderson = initAnderson(power2Ceil(n));
   }
 
   // specify strategy for picking a queue
@@ -293,7 +285,6 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
     workerRoutine = &routineAwesome;
 						
   // spawn threads
-  startTimer(timer);
   for (i = 0; i < n; i++) {
     args[i].tid = i;
     args[i].numPackets = T;
@@ -324,7 +315,6 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
   do {
     __sync_synchronize();
   } while (active);
-  stopTimer(timer);
   if (verbose) printf("in executeParallel: all threads finished, preparing to free memory...\n");
 
   // output relevant information for specified test
@@ -333,16 +323,17 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
   for (i = 0; i < n; i++)
     freeQueue(queueArr[i]);
   for (i = 0; i < n; i++) {
-    if (strcmp(L, "tas") == 0) freeTAS(locksArr[i].tas);
-    if (strcmp(L, "anderson") == 0) freeAnderson(locksArr[i].anderson);
+    if (strcmp(L, "tas") == 0) freeTAS(locksArr[i]->tas);
+    if (strcmp(L, "anderson") == 0) freeAnderson(locksArr[i]->anderson);
   }
   free(queueArr);
   free(locksArr);
 
+  int uniform = 0; // deal with this later
   if (verbose) {
     printf("%s: %u-thread %sly distributed %s parallel execution using %s lock complete ",
 	   prog, n, uniform ? "uniform" : "exponential", S, L);
-    printf("(time = %f msec)\n", getElapsedTime(timer));
+    printf("(time = %f msec)\n", 0.0);
   }
 
   if (fp != NULL) fclose(fp);
@@ -384,15 +375,15 @@ void * routineHomeQueue(void *arg)
   // dequeue and process all packets
   for (i = 0; i < m->numPackets; i++) {
     // acquire lock
-    if (strcmp(lockType, "tas") == 0) acquireTAS(locksArr[m->tid].tas);
-    if (strcmp(lockType, "anderson") == 0) acquireAnderson(locksArr[m->tid].anderson, &mySlot);
+    if (strcmp(lockType, "tas") == 0) acquireTAS(locksArr[m->tid]->tas);
+    if (strcmp(lockType, "anderson") == 0) acquireAnderson(locksArr[m->tid]->anderson, &mySlot);
 
     // critcal section: dequeue
     while (! (nextPacket = dequeue(queue))) { sched_yield(); }
 
     // release lock
-    if (strcmp(lockType, "tas") == 0) acquireTAS(locksArr[m->tid].tas);
-    if (strcmp(lockType, "anderson") == 0) releaseAnderson(locksArr[m->tid].anderson, mySlot);
+    if (strcmp(lockType, "tas") == 0) releaseTAS(locksArr[m->tid]->tas);
+    if (strcmp(lockType, "anderson") == 0) releaseAnderson(locksArr[m->tid]->anderson, mySlot);
 
     long checksum = getFingerprint(nextPacket->iterations, nextPacket->seed);
     if (verbose) printf(" in homeQueue routine: worker %d's checksum[%d] = %ld\n",
@@ -407,6 +398,8 @@ void * routineHomeQueue(void *arg)
 
 void * routineAwesome(void *arg)
 {
+  metadata_t *m = (metadata_t *)arg;
+  
   if (verbose) printf("in awesome routine: worker %d exiting...\n", m->tid);
   __sync_fetch_and_sub(&active, 1);
   return NULL;
@@ -414,12 +407,12 @@ void * routineAwesome(void *arg)
 
 void * counterRoutine(void *arg)
 {
-  medadata_t *m = (metadata_t *)arg;
+  metadata_t *m = (metadata_t *)arg;
   if (verbose) printf("in counterRoutine: hello, this is thread %u\n", m->tid);
 
   if (strcmp(m->lockType, "tas") == 0) {
     while (count < B) {
-      acquireTAS(counterLock.tas);
+      acquireTAS(counterLock->tas);
       if (count < B) {
 	count++; m->inc++;
 	if (output == 7) {
@@ -427,11 +420,12 @@ void * counterRoutine(void *arg)
 	  fputs(fileStr, m->fp);
 	}
       }
-      releaseTAS(counterLock.tas);
+      releaseTAS(counterLock->tas);
+    }
   } else {
       int mySlot; // thread local
       while (count < B) {
-	acquireAnderson(counterLock.anderson, &mySlot);
+	acquireAnderson(counterLock->anderson, &mySlot);
 	if (count < B) {
 	  count++; m->inc++;
 	  if (output == 7) {
@@ -439,7 +433,7 @@ void * counterRoutine(void *arg)
 	    fputs(fileStr, m->fp);
 	  }
 	}
-	releaseAnderson(counterLock.anderson, mySlot);
+	releaseAnderson(counterLock->anderson, mySlot);
       }
     }
   

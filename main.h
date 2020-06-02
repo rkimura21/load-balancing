@@ -5,7 +5,6 @@
 #include "lock.h"
 #include "utils/packetsource.h"
 #include "utils/fingerprint.h"
-#include "utils/stopwatch.h"
 
 #define MAX_THREAD 64
 
@@ -19,6 +18,7 @@ typedef struct {
 } metadata_t;
 
 unsigned int power2Ceil(unsigned int n);
+void parallelCounter(unsigned int n, char *L);
 void executeSerial(PacketSource_t *packetSource, unsigned int T, unsigned int n,
 		   volatile Packet_t* (*get)(PacketSource_t *, int));
 void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int n,
@@ -27,5 +27,6 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
 void * routineLockFree(void *arg);
 void * routineHomeQueue(void *arg);
 void * routineAwesome(void *arg);
+void * counterRoutine(void *arg);
 
 #endif

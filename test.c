@@ -14,7 +14,128 @@ static char *prog;
 int main(int argc, char *argv[])
 {
   prog = argv[0];
-  int c, err = 0, t = -1;
+  verbose = 0;
+  int c, err = 0, t = -1, seed = 1;
+  unsigned int r = 1, n = 1, D = 8, M = 2000;
+  long W = 1, B = 1, T = 1;
+  char *L = NULL, *S = NULL;
+  char usage[400] = "usage %s: -t <testNo> [-r <trialRuns>] [-M <numMillisecs>] [-n <numSources>] ";
+  strcat(usage, "[-W <mean>] [-L <lockType>] [-S <strategy>] [-T <numPackets>] [-D <queueDepth>] ");
+  strcat(usage, "[-s <seed>] [-B <big>] [-v]\n");
+  char okString[200] = "lockType = { 'tas', 'anderson' } ";
+  strcat(okString, "strategy = { 'lockFree', 'homeQueue', 'awesome' }\n");
+  
+  // retrieve command-line arguments
+  while ((c = getopt(argc, argv, "M:n:W:s:D:L:S:T:B:r:t:v")) != -1)
+    switch(c) {
+    case 'M':
+      sscanf(optarg, "%u", &M); break;
+    case 'n':
+      sscanf(optarg, "%u", &n); break;
+    case 'W':
+      sscanf(optarg, "%ld", &W); break;
+    case 's':
+      sscanf(optarg, "%d", &seed); break;
+    case 'D':
+      sscanf(optarg, "%u", &D); break;
+    case 'L':
+      L = optarg; break;
+    case 'S':
+      S = optarg; break;
+    case 'T':
+      sscanf(optarg, "%ld", &T); break;
+    case 'B':
+      sscanf(optarg, "%ld", &B); break;
+    case 'r':
+      sscanf(optarg, "%u", &r); break;
+    case 't':
+      sscanf(optarg, "%d", &t); break; 
+    case 'v':
+      verbose = 1; break;
+    case '?':
+      err = 1; break;
+    }
+
+  // handle malformed or incorrect command-line arguments
+  if (r < 1) {
+    fprintf(stderr, "%s: r (trialRuns) must be greater than 0\n", prog);
+    fprintf(stderr, usage, prog);
+    exit(1);
+  } else if (n < 1 || n > MAX_THREAD) {
+    fprintf(stderr, "%s: n (numSources) must be greater than 0 and less than/equal to 64\n", prog);
+    exit(1);
+  } else if (W < 1 || T < 1) {
+    fprintf(stderr, "%s: W (mean) and T (numPackets) values must be greater than 0\n", prog);
+    exit(1);
+  } else if (M < 2000) {
+    fprintf(stderr, "%s: M (numMilliseconds) value must be greater than 2000\n", prog);
+    exit(1);
+  } else if (D < 1 || D % 2) {
+    fprintf(stderr, "%s: D (queueDepth) must be a positive power of 2\n", prog);
+    exit(1);
+  } else if ((t == 2 || t == 4 || t == 6 || t == 7) && (L == NULL || S == NULL)) {
+    fprintf(stderr, "%s: -L (lockType) and/or -S (strategy) values are missing\n", prog);
+    fprintf(stderr, okString, prog);
+    exit(1);
+  } else if ((t == 2 || t== 4) && (strcmp(S, "lockFree") != 0 &&
+				   strcmp(S, "homeQueue") != 0 && strcmp(S, "awesome") != 0)) {
+    fprintf(stderr, "%s: S (strategy) value must be 'lockFree', 'homeQueue', or 'awesome'\n", prog);
+    exit(1);
+  } else if ((t == 6 || t == 7) && (strcmp(S, "homeQueue") == 0 || strcmp(S, "awesome") == 0) &&
+	     (strcmp(L, "tas") != 0 && strcmp(L, "anderson") != 0)) {
+    fprintf(stderr, "%s: L (lockType) value must be 'tas' or 'anderson'\n", prog);
+    exit(1);
+  } else if ((t >= 6 && t <= 8) && B < 1) {
+    fprintf(stderr, "%s: -B (big) must be greater than 0\n", prog);
+    exit(1);
+  } else if (err) {
+    fprintf(stderr, usage, prog);
+    exit(1);
+  }
+
+  switch(t) {
+  case 1:
+    parallelTest(n, W, T, seed); break;
+  case 2:
+    strategyTest(n, W, T, seed, S); break;
+  case 3:
+    timedParallelTest(n, W, T, seed, M); break;
+  case 4:
+    timedStrategyTest(n, W, T, seed, S, M); break;
+  case 5:
+    queueSequenceTest(W, D); break;
+  case 6:
+    countingTest(B, n, L); break;
+  case 7:
+    contiguityTest(B, n, L); break;
+  case 8:
+    orderingTest(B, n); break;
+  case 9:
+    idleLockOverhead(r); break;
+  case 10:
+    uniformSpeedup(r); break;
+  case 11:
+    exponentialSpeedup(r); break;
+  case 12:
+    awesomeSpeedup(r); break;
+  case 13:
+    idleLockOverhead(r);
+    uniformSpeedup(r);
+    exponentialSpeedup(r);
+    awesomeSpeedup(r);
+    break;
+  default:
+    fprintf(stderr, "%s: -t (testNo) must be between 1 and 13, inclusive\n", prog);
+    fprintf(stderr, "1 = parallelTest(n, W, T, seed)\n2 = strategyTest(n, W, T, seed, S)\n");
+    fprintf(stderr, "3 = timedParallelTest(n, W, T, seed, M)\n");
+    fprintf(stderr, "4 = timedStrategyTest(n, W, T, seed, S, M)\n5 = queueSequenceTest(W, D)\n");
+    fprintf(stderr, "6 = countingTest(B, n, L)\n7 = contiguityTest(B, n, L)\n");
+    fprintf(stderr, "8 = orderingTest(B, n)\n9 = idleLockOverhead(r)\n");
+    fprintf(stderr, "10 = uniformSpeedup(r)\n11 = exponentialSpeedup(r)\n");
+    fprintf(stderr, "12 = awesomeSpeedup(r)\n13 = run all experiments\n");
+    exit(1);
+  }
+    
   return 0;
 }
 
@@ -48,8 +169,7 @@ float getStdDev(long arr[], int n) { return sqrt(getVariance(arr, n)); }
 
 void parallelTest(unsigned int n, long W, unsigned int T, int seed)
 {
-  int i, j, matching = 0;
-  long pCount;
+  int i, j, k, matching = 0;
   FILE *fp;
   pid_t childPid;
   char fileStr[128];
@@ -58,8 +178,8 @@ void parallelTest(unsigned int n, long W, unsigned int T, int seed)
     fprintf(stderr, "%s: 'main' file does not exist in current dir, or is not executable\n", prog);
     exit(1);
   } else {
-    char nStr[10], char wStr[10]; char tStr[10]; char sStr[10];
-    sprintf(nStr, "%u" n); sprintf(wStr, "%ld", W); sprintf(tStr, "%u", T); sprintf(sStr,"%d", seed);
+    char nStr[10]; char wStr[10]; char tStr[10]; char sStr[10];
+    sprintf(nStr, "%u", n); sprintf(wStr, "%ld", W); sprintf(tStr, "%u", T); sprintf(sStr,"%d", seed);
     for (i = 0; i < 2; i++) { // uniform or exponential
       for (j = 0; j < 2; j++) { // serial or parallel
 	childPid = fork();
@@ -81,24 +201,32 @@ void parallelTest(unsigned int n, long W, unsigned int T, int seed)
   }
 
   // compare packet count per source (for every version x distribution combo)
-  i = 0; long pCounts[2][2][n]; // arr[distr][version][n]
+  int offset = 0; i = 0;
+  long pCount;
+  long *valsD = malloc(4 * n * sizeof(long));
+  long valsS[2][2][n]; // arr[distr][version][n]
   if ((fp = fopen("out_parallelCheck.txt", "r")) == NULL) {
     fprintf(stderr, "%s: can't open out_parallelCheck.txt\n", prog);
     exit(1);
   } while (!feof(fp)) {
     if (fgets(fileStr, sizeof(fileStr), fp) != NULL) {
       sscanf(fileStr, "%ld", &pCount);
-      pCounts[i / (2 * n)][i / n % 2][i % n] = pCount;
+      offset = (i / (2 * n)) * 2 * n + (i / n % 2) * n + (i % n); // = arr[i/(2*n)][i/n%2][i%n]
+      valsD[offset] = pCount;
       i++;
     }
   }
   fclose(fp);
- 
-  long uniCounts[2][n] = pCounts[0];
-  long expCounts[2][n] = pCounts[1];
+
+  for (i = 0; i < 2; i++) // distr
+    for (j = 0; j < 2; j++) // version
+      for (k = 0; k < n; k++) // n
+	valsS[i][j][k] = valsD[i*2*n+j*n+k];
+
+  free(valsD);
   for (i = 0; i < n; i++) {
-    if (uniCounts[0][i] != uniCounts[1][i]) break;
-    if (expCounts[0][i] != expCounts[1][i]) break;
+    if (valsS[0][0][i] != valsS[0][1][i]) break; // compare versions (uniform)
+    if (valsS[1][0][i] != valsS[1][1][i]) break; // compare versions (exponential)
     matching++;
   }
 
@@ -110,8 +238,7 @@ void parallelTest(unsigned int n, long W, unsigned int T, int seed)
 
 void strategyTest(unsigned int n, long W, unsigned int T, int seed, char *S)
 {
-  int i, j, k, matching = 0;
-  long pCount;
+  int i, j, k, l, matching = 0;
   FILE *fp;
   pid_t childPid;
   char fileStr[128];
@@ -125,16 +252,17 @@ void strategyTest(unsigned int n, long W, unsigned int T, int seed, char *S)
     fprintf(stderr, "%s: 'main' file does not exist in current dir, or is not executable\n", prog);
     exit(1);
   } else {
-    char nStr[10], char wStr[10]; char tStr[10]; char sStr[10];
-    sprintf(nStr, "%u" n); sprintf(wStr, "%ld", W); sprintf(tStr, "%u", T); sprintf(sStr,"%d", seed);
+    char nStr[10]; char wStr[10]; char tStr[10]; char sStr[10];
+    sprintf(nStr, "%u", n); sprintf(wStr, "%ld", W);
+    sprintf(tStr, "%u", T); sprintf(sStr,"%d", seed);
     for (i = 0; i < 2; i++) { // strategy (lockFree or S)
       for (j = 0; j < 2; j++) { // distribution (uniform or exponential)
 	for (k = 0; k < 2; k++) { // lock type (tas or anderson)
 	  childPid = fork();
 	  if (childPid == 0) {
 	    execlp("./main", "main", "-n", nStr, "-W", wStr, "-T", tStr, "-s", sStr, "-M", "2000",
-		   "-S", i == 1 ? S : "lockFree", i == 0 ? "-u" : "", "-L",
-		   k == 0 ? "tas" : "anderson", "-p", verbose ? "-v" : "", "-o", "2", (char *) NULL);
+		   "-S", i == 1 ? S : "lockFree", i == 0 ? "-u" : "", "-L", k == 0 ? "tas" :
+		   "anderson", "-p", verbose ? "-v" : "", "-o", "2", (char *) NULL);
 	  } else if (childPid < 0) {
 	    fprintf(stderr, "%s: fork failed!\n", prog); exit(1);
 	  } else {
@@ -150,51 +278,56 @@ void strategyTest(unsigned int n, long W, unsigned int T, int seed, char *S)
   }
     
   // compare packet count per source (for every S x L x distribution combo)
-  i = 0; long pCounts[2][2][2][n]; // arr[S][distr][L][n]
+  int offset = 0; i = 0;
+  long pCount;
+  long *valsD = malloc(8 * n * sizeof(long));
+  long valsS[2][2][2][n]; // arr[S][distr][L][n]
   if ((fp = fopen("out_strategyCheck.txt", "r")) == NULL) {
     fprintf(stderr, "%s: can't open out_parallelCheck.txt\n", prog);
     exit(1);
   } while (!feof(fp)) {
     if (fgets(fileStr, sizeof(fileStr), fp) != NULL) {
       sscanf(fileStr, "%ld", &pCount);
-      pCounts[i / (4 * n)][i / (2 * n) % 2][i / n % 2][i % n] = pCount;
+      offset = (i / (4 * n)) * 4 * n + (i / (2 * n) % 2) * 2 * n + (i / n % 2) * n + (i % n);
+      valsD[offset] = pCount;
       i++;
     }
   }
   fclose(fp);
 
-  int broke = 0;
-  long lFreeCounts[2][2][n] = pCounts[0];
-  long otherCounts[2][2][n] = pCounts[1]; // for input S
-  for (i = 0; i < 2; i++) { // distribution (uniform or exponential)
-    long lFreeDistrCounts[2][n] = lFreeCounts[i];
-    long otherDistrCounts[2][n] = otherCounts[i];
-    for (j = 0; j < n; j++) {
-      if (lFreeDistrCounts[0][j] != otherDistrCounts[0][j]) { break; broke = 1; }
-      if (lFreeDistrCounts[1][j] != otherDistrCounts[1][j]) { break; broke = 1; }
-      matching++;
-    }
-    if (broke) break;
-  }  
+  for (i = 0; i < 2; i++) // S
+    for (j = 0; j < 2; j++) // distr
+      for (k = 0; k < 2; k++) // L
+	for (l = 0; l < n; l++) // n
+	  valsS[i][j][k][l] = valsD[i*4*n+j*2*n+k*n+l];
+
+  free(valsD);
+  for (i = 0; i < n; i++) {
+    if (valsS[0][0][0][i] != valsS[1][0][0][i]) break; // compare S's (uniform, tas)
+    if (valsS[0][0][1][i] != valsS[1][0][1][i]) break; // compare S's (uniform, anderson)
+    if (valsS[0][1][0][i] != valsS[1][1][0][i]) break; // compare S's (exponential, tas)
+    if (valsS[0][1][1][i] != valsS[1][1][1][i]) break; // compare S's (exponential, anderson)
+    matching++;
+  }
 
   if (remove("out_strategyCheck.txt"))
     fprintf(stderr, "%s: unable to delete out_strategyCheck.txt\n", prog);
   printf("%s: strategyCheckTest(n = %u, T = %u, W = %ld, seed = %d, S = %s) has %s!\n",
-	 prog, n, T, W, seed, S, matching == n * 2 ? "PASSED" : "FAILED");
+	 prog, n, T, W, seed, S, matching == n ? "PASSED" : "FAILED");
 }
 
-void timedParallelTest()
+void timedParallelTest(unsigned int n, long W, unsigned int T, int seed, unsigned int M)
 {
 }
 
-void timedStrategyTest()
+void timedStrategyTest(unsigned int n, long W, unsigned int T, int seed, char *S, unsigned int M)
 {
 }
 
 void queueSequenceTest(long W, unsigned int D)
 {
   int i, matching = 0;
-  Queue_t *queue = initQueue(D);
+  queue_t *queue = initQueue(D);
   volatile Packet_t *enqPackets[D];
   volatile Packet_t *deqPackets[D];
 
@@ -388,7 +521,7 @@ void orderingTest(long B, int n)
 
   vTAS = getVariance(incs[1], n);
   vABQ = getVariance(incs[0], n);
-  sdTASr = getStdDev(incs[1], n);
+  sdTAS = getStdDev(incs[1], n);
   sdABQ = getStdDev(incs[0], n);
 
   if (remove("out_ordering.txt"))

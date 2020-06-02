@@ -4,11 +4,11 @@
 #include "queue.h"
 
 // returns x % y (y must be a positive power of 2)
-int mod (int x, int y) { return (x & (y - 1)); }
+int modQ(int x, int y) { return (x & (y - 1)); }
 
 queue_t * initQueue(unsigned int depth)
 {
-  queue_t * queue = malloc(sizeof(Queue_t));
+  queue_t * queue = malloc(sizeof(queue_t));
   queue->buffer = malloc(depth * sizeof(volatile Packet_t *));
   queue->head = 0;
   queue->tail = 0;
@@ -23,7 +23,7 @@ int enqueue(queue_t *queue, volatile Packet_t *packet)
   if (queue->tail - queue->head == queue->depth)
     return 0;
 
-  int i = mod(queue->tail, queue->depth);
+  int i = modQ(queue->tail, queue->depth);
   queue->buffer[i] = packet;
   __sync_synchronize();
   queue->tail++;
@@ -36,7 +36,7 @@ volatile Packet_t * dequeue(queue_t *queue)
   if (queue->tail - queue->head == 0)
     return NULL;
 
-  int i = mod(queue->head, queue->depth);
+  int i = modQ(queue->head, queue->depth);
   volatile Packet_t *packet = queue->buffer[i];
   __sync_synchronize();
   queue->head++;
