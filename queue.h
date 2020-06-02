@@ -15,5 +15,6 @@ queue_t * initQueue(unsigned int depth);
 int enqueue(queue_t *queue, volatile Packet_t *packet);
 volatile Packet_t * dequeue(queue_t *queue);
 void freeQueue(queue_t *queue);
+int isEmpty(queue_t *queue);
 
 #endif

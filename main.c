@@ -4,9 +4,12 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <sched.h>
+#include <time.h>
+#include <signal.h>
 
 #include "main.h"
 
+volatile int doStop = 0;
 static unsigned int M;
 static long B;
 static int verbose;
@@ -18,10 +21,10 @@ locks_t **locksArr;
 static locks_t *counterLock;
 volatile int active;
 volatile long count;
+volatile long remaining;
 char *tests[12] = { "parallelCheck", "strategyCheck", "timedParallel", "timedStrategy", "queue",
 		    "counter", "contiguity", "ordering", "overhead", "speedupU", "speedupE",
 		    "speedupA" };
-
 
 int main(int argc, char *argv[])
 {
@@ -29,8 +32,8 @@ int main(int argc, char *argv[])
   verbose = 0, output = 0;
   M = 2000, B = 0, count = 0;
   int i, c, err = 0;
-  unsigned int n = 1, D = 8;
-  long W = 1, T = 1;
+  unsigned int n = 1, D = 8, T = 1;
+  long W = 1;
   int seed = 1, uniform = 0, parallel = 0;
   char *L = NULL, *S = NULL;
   FILE *fp = NULL;
@@ -61,7 +64,7 @@ int main(int argc, char *argv[])
     case 'S':
       sFlag = 1; S = optarg; break;
     case 'T':
-      tFlag = 1; sscanf(optarg, "%ld", &T); break;
+      tFlag = 1; sscanf(optarg, "%u", &T); break;
     case 'B':
       sscanf(optarg, "%ld", &B); break;
     case 'p':
@@ -125,8 +128,8 @@ int main(int argc, char *argv[])
 
   // route to parallel/serial code
   if (output >= 6 && output <= 8) parallelCounter(n, L);
-  else if (parallel) executeParallel(packetSource, T, n, D, L, S, get);
-  else executeSerial(packetSource, T, n, get);
+  else if (parallel) executeParallel(packetSource, T, n, M, D, L, S, get);
+  else executeSerial(packetSource, T, n, M, get);
 
   // output final packet counts
   if (output == 1 || output == 2) {
@@ -155,6 +158,8 @@ unsigned int power2Ceil(unsigned int n)
   n++;
   return n;
 }
+
+void notifyStop(union sigval s) { doStop = 1; }
 
 void parallelCounter(unsigned int n, char *L)
 {
@@ -229,42 +234,78 @@ void parallelCounter(unsigned int n, char *L)
 }
 
 void executeSerial(PacketSource_t *packetSource, unsigned int T, unsigned int n,
-		   volatile Packet_t* (*get)(PacketSource_t *, int))
+		   unsigned int M, volatile Packet_t* (*get)(PacketSource_t *, int))
 {
   int i, j;
+  FILE *fp= NULL;
+  
+  // create and set-up timer
+  timer_t timer;
+  struct sigevent event;
+  struct itimerspec tspec = { 0 };
+  memset(&event, 0, sizeof(event)); // to get valgrind to stop complaining
+  event.sigev_notify = SIGEV_THREAD;
+  event.sigev_notify_function = &notifyStop;
+  event.sigev_notify_attributes = NULL;
+  timer_create(CLOCK_MONOTONIC, &event, &timer);
+  tspec.it_value.tv_sec = M / 1000; 
+  tspec.it_value.tv_nsec = M % 1000 * 1000000;
+  tspec.it_interval.tv_sec = 0;
+  tspec.it_interval.tv_nsec = 0;
 
-  for (i = 0; i < T; i++) {
-    for (j = 0; j < n; j++) {
+  if (output == 3) { // for timed parallel test
+    snprintf(fileStr, sizeof(fileStr), "out_%s_s.txt", tests[output-1]);
+    fp = fopen(fileStr, "a");
+  }
+  
+  if (! (output == 1 || output == 2))
+    timer_settime(timer, 0, &tspec, NULL); // start timer
+
+  long processed = 0;
+  for (i = 0; i < T && !doStop; i++) {
+    for (j = 0; j < n && !doStop; j++) {
       volatile Packet_t *packet = (*get)(packetSource, j);
       long checksum = getFingerprint(packet->iterations, packet->seed);
+      processed++;
       if (verbose) printf("source %d's checksum[%d] = %ld\n", j, i, checksum);
       free((void *)packet);
     }
   }
-  
-  if (verbose) printf("serial execution complete (time = %f msec)\n", 0.0);
-  
-  if (output >= 4 && output <= 7) { // we'll need to change this to throughput-based
-    FILE *fp = NULL;
-    snprintf(fileStr, sizeof(fileStr), "out_%s.txt", tests[output-1]);
-    fp = fopen(fileStr, "a");
-    sprintf(fileStr, "%f\n", 0.0);
-    fputs(fileStr, fp);
-    fclose(fp);
-  }
+
+  if (fp != NULL) fclose(fp);
+  if (timer_delete(timer)) fprintf(stderr, "%s: timer unsuccessfully deleted\n", prog);
+  if (verbose)
+    printf("%s: serial execution done, %ld of %u packets processed in %u msec\n",
+	   prog, processed, n * T, M);
 }
 
 void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int n,
-		     unsigned int D, char *L, char *S,
+		     unsigned int M, unsigned int D, char *L, char *S,
 		     volatile Packet_t* (*get)(PacketSource_t *, int))
 {
-  int i, j, rc;
+  int i, rc;
   FILE *fp = NULL;
   active = n;
+  remaining = n * T;
+  volatile int *packetProgress = malloc(sizeof(volatile int) * n);
   queueArr = malloc(sizeof(queue_t *) * n);
   locksArr = malloc(sizeof(locks_t *) * n);
   pthread_t *threads = malloc(sizeof(pthread_t) * n);
   metadata_t *args = malloc(sizeof(metadata_t) * n);
+
+  // create and set-up timer
+  timer_t timer;
+  struct sigevent event;
+  struct itimerspec tspec = { 0 };
+  memset(&event, 0, sizeof(event)); // to get valgrind to stop complaining
+  event.sigev_notify = SIGEV_THREAD;
+  event.sigev_notify_function = &notifyStop;
+  event.sigev_notify_attributes = NULL;
+  timer_create(CLOCK_MONOTONIC, &event, &timer);
+  tspec.it_value.tv_sec = M / 1000;
+  tspec.it_value.tv_nsec = M % 1000 * 1000000;
+  tspec.it_interval.tv_sec = 0;
+  tspec.it_interval.tv_nsec = 0;  
     
   // populate global queue and lock arrays
   for (i = 0; i < n; i++)
@@ -274,6 +315,8 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
     if (strcmp(L, "tas") == 0) locksArr[i]->tas = initTAS();
     else locksArr[i]->anderson = initAnderson(power2Ceil(n));
   }
+  for (i = 0; i < n; i++)
+    packetProgress[i] = 0;
 
   // specify strategy for picking a queue
   void* (*workerRoutine)(void*);
@@ -283,7 +326,18 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
     workerRoutine = &routineHomeQueue;
   else
     workerRoutine = &routineAwesome;
+
+  if (output == 3) { // for timed parallel test
+    snprintf(fileStr, sizeof(fileStr), "out_%s_p.txt", tests[output-1]);
+    fp = fopen(fileStr, "a");
+  } else if (output == 4) { // for timed strategy test
+    snprintf(fileStr, sizeof(fileStr), "out_%s_%s.txt", tests[output-1], S);
+    fp = fopen(fileStr, "a");
+  }
 						
+  if (! (output == 1 || output == 2))
+    timer_settime(timer, 0, &tspec, NULL); // start timer  
+
   // spawn threads
   for (i = 0; i < n; i++) {
     args[i].tid = i;
@@ -291,6 +345,8 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
     args[i].processed = 0;
     args[i].lockType = L;
     args[i].fp = fp;
+    args[i].numSources = n;
+    args[i].packetProgress = packetProgress;
     rc = pthread_create(&threads[i], NULL, workerRoutine, (void *)(args+i));
     if (rc) {
       fprintf(stderr, "error: return code from pthread_create() is %d\n", rc);
@@ -302,13 +358,13 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
   }
 
   // enqueue all threads
-  for (i = 0; i < T; i++) {
-    for (j = 0; j < n; j++) {
-      volatile Packet_t *nextPacket = (*get)(packetSource, j);
-      while (! enqueue(queueArr[j], nextPacket)) { /* spin */ }
-      if (verbose) printf("in executeParallel: just enqueue'd packet %d for worker %d\n", i, j);
-    }
+  for (i = 0; i < n * T && !doStop; i++) {
+    volatile Packet_t *nextPacket = (*get)(packetSource, i % n);
+    while (! enqueue(queueArr[i % n], nextPacket)) { /* spin */ }
+    if (verbose)
+      printf("in executeParallel: just enqueue'd packet %d for worker %d\n", i / n, i % n);
   }
+  
   if (verbose) printf("in executeParallel: enqueue-ing done, waiting for workers to finish...\n");
 
   // wait for all threads to terminate
@@ -317,7 +373,9 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
   } while (active);
   if (verbose) printf("in executeParallel: all threads finished, preparing to free memory...\n");
 
-  // output relevant information for specified test
+  // harvest worker data for total throughput
+  long processed = 0;
+  for (i = 0; i < n; i++) processed += args[i].processed;
 
   // free queues and locks
   for (i = 0; i < n; i++)
@@ -329,17 +387,15 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
   }
   free(queueArr);
   free(locksArr);
-
-  int uniform = 0; // deal with this later
-  if (verbose) {
-    printf("%s: %u-thread %sly distributed %s parallel execution using %s lock complete ",
-	   prog, n, uniform ? "uniform" : "exponential", S, L);
-    printf("(time = %f msec)\n", 0.0);
-  }
+  free((void *)packetProgress);
 
   if (fp != NULL) fclose(fp);
   free(args);
   free(threads);
+  if (timer_delete(timer)) fprintf(stderr, "%s: timer unsuccessfully deleted\n", prog);
+  if (1)
+    printf("%s: parallel execution (L = %s, S = %s) done, %ld of %u packets processed in %u msec\n",
+	   prog, L, S, processed, n * T, M);
 }
 
 void * routineLockFree(void *arg)
@@ -349,11 +405,20 @@ void * routineLockFree(void *arg)
   queue_t *queue = queueArr[m->tid];
   volatile Packet_t *nextPacket;
   if (verbose) printf("in lockFree routine: hello, this is worker %d\n", m->tid);
-
-  // dequeue and process all packets
-  for (i = 0; i < m->numPackets; i++) {
+  
+  // dequeue and process packets
+  for (i = 0; i < m->numPackets && !doStop; i++) {
+    if (doStop) { // free any remaining packets
+      while ((nextPacket = dequeue(queue))) free((void *)nextPacket);
+      break;
+    }
     while (! (nextPacket = dequeue(queue))) { sched_yield(); }
     long checksum = getFingerprint(nextPacket->iterations, nextPacket->seed);
+    m->processed++;
+    if (output == 3 || output == 4) {
+      sprintf(fileStr, "%d:%ld\n", m->tid, checksum);
+      fputs(fileStr, m->fp);
+    }
     if (verbose) printf("in lockFree routine: worker %d's checksum[%d] = %ld\n",
 			m->tid, i, checksum);
     free((void *)nextPacket);
@@ -373,8 +438,8 @@ void * routineHomeQueue(void *arg)
   volatile Packet_t *nextPacket;
   if (verbose) printf("in homeQueue routine: hello, this is worker %d\n", m->tid);
 
-  // dequeue and process all packets
-  for (i = 0; i < m->numPackets; i++) {
+  // dequeue and process packets
+  for (i = 0; i < m->numPackets && !doStop; i++) {
     // acquire lock
     if (strcmp(lockType, "tas") == 0) acquireTAS(locksArr[m->tid]->tas);
     if (strcmp(lockType, "anderson") == 0) acquireAnderson(locksArr[m->tid]->anderson, &mySlot);
@@ -387,6 +452,13 @@ void * routineHomeQueue(void *arg)
     if (strcmp(lockType, "anderson") == 0) releaseAnderson(locksArr[m->tid]->anderson, mySlot);
 
     long checksum = getFingerprint(nextPacket->iterations, nextPacket->seed);
+    m->processed++;
+
+    if (output == 3 || output == 4) {
+      sprintf(fileStr, "%d:%ld\n", m->tid, checksum);
+      fputs(fileStr, m->fp);
+    }
+    
     if (verbose) printf(" in homeQueue routine: worker %d's checksum[%d] = %ld\n",
 			m->tid, i, checksum);
     free((void *)nextPacket);
@@ -400,6 +472,72 @@ void * routineHomeQueue(void *arg)
 void * routineAwesome(void *arg)
 {
   metadata_t *m = (metadata_t *)arg;
+  int mru = rand() % m->numSources; // used for targeting victim queues
+  int mySlots[m->numSources]; // thread local; keep track of position in all anderson queues
+  queue_t *myQueue = queueArr[m->tid];
+  char *lockType = m->lockType;
+  volatile Packet_t *nextPacket;
+  if (verbose) printf("in awesome routine: hello, this is worker %d\n", m->tid);
+
+  while (remaining && !doStop) {
+    while (!isEmpty(myQueue)) {
+      // acquire my lock
+      if (strcmp(lockType, "tas") == 0) acquireTAS(locksArr[m->tid]->tas);
+      if (strcmp(lockType, "anderson") == 0) acquireAnderson(locksArr[m->tid]->anderson, &mySlots[m->tid]);
+
+      // my critcal section: dequeue
+      while (! (nextPacket = dequeue(myQueue))) { sched_yield(); }
+      __sync_fetch_and_sub(&remaining, 1);
+      m->processed++;
+      m->packetProgress[m->tid]++;
+      
+      // release my lock
+      if (strcmp(lockType, "tas") == 0) releaseTAS(locksArr[m->tid]->tas);
+      if (strcmp(lockType, "anderson") == 0) releaseAnderson(locksArr[m->tid]->anderson, mySlots[m->tid]);
+
+      long checksum = getFingerprint(nextPacket->iterations, nextPacket->seed);
+      
+      if (output == 3 || output == 4) {
+	sprintf(fileStr, "%d:%ld\n", m->tid, checksum);
+	fputs(fileStr, m->fp);
+      }
+
+      if (verbose) printf(" in awesome routine: worker %d computed own checksum[%d] = %ld\n",
+			  m->tid, m->packetProgress[m->tid], checksum);
+      free((void *)nextPacket);    
+    }
+    
+    while (isEmpty(myQueue)) { // attempt to steal from another queue
+      sched_yield();
+      if (!isEmpty(queueArr[mru])) {
+	// acquire their lock
+	if (strcmp(lockType, "tas") == 0) acquireTAS(locksArr[mru]->tas);
+	if (strcmp(lockType, "anderson") == 0) acquireAnderson(locksArr[mru]->anderson, &mySlots[mru]);
+
+	// their critcal section: dequeue
+	while (! (nextPacket = dequeue(queueArr[mru]))) { sched_yield(); }
+	__sync_fetch_and_sub(&remaining, 1);
+	m->processed++;
+	m->packetProgress[mru]++;
+
+	// release their lock
+	if (strcmp(lockType, "tas") == 0) releaseTAS(locksArr[mru]->tas);
+	if (strcmp(lockType, "anderson") == 0) releaseAnderson(locksArr[mru]->anderson, mySlots[mru]);
+
+	long checksum = getFingerprint(nextPacket->iterations, nextPacket->seed);
+
+	if (output == 3 || output == 4) {
+	  sprintf(fileStr, "%d:%ld\n", mru, checksum);
+	  fputs(fileStr, m->fp);
+	}
+
+	if (verbose) printf(" in awesome routine: worker %d computed worker %d's checksum[%d] = %ld\n",
+			    m->tid, mru, m->packetProgress[mru], checksum);
+	free((void *)nextPacket);
+      }
+      else mru = rand() % m->numSources; // assign new target queue
+    }
+  } 
   
   if (verbose) printf("in awesome routine: worker %d exiting...\n", m->tid);
   __sync_fetch_and_sub(&active, 1);

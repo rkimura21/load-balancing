@@ -16,8 +16,8 @@ int main(int argc, char *argv[])
   prog = argv[0];
   verbose = 0;
   int c, err = 0, t = -1, seed = 1;
-  unsigned int r = 1, n = 1, D = 8, M = 2000;
-  long W = 1, B = 1, T = 1;
+  unsigned int r = 1, n = 1, D = 8, T = 1, M = 2000;
+  long W = 1, B = 1;
   char *L = NULL, *S = NULL;
   char usage[400] = "usage %s: -t <testNo> [-r <trialRuns>] [-M <numMillisecs>] [-n <numSources>] ";
   strcat(usage, "[-W <mean>] [-L <lockType>] [-S <strategy>] [-T <numPackets>] [-D <queueDepth>] ");
@@ -43,7 +43,7 @@ int main(int argc, char *argv[])
     case 'S':
       S = optarg; break;
     case 'T':
-      sscanf(optarg, "%ld", &T); break;
+      sscanf(optarg, "%u", &T); break;
     case 'B':
       sscanf(optarg, "%ld", &B); break;
     case 'r':

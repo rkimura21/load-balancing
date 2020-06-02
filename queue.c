@@ -48,3 +48,8 @@ void freeQueue(queue_t *queue)
   free(queue->buffer);
   free(queue);
 }
+
+int isEmpty(queue_t *queue)
+{
+  return queue->tail - queue->head == 0;
+}
