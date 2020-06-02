@@ -1,4 +1,4 @@
-OBJS = queue.o lock.o packetsource.o generators.o crc32.o fingerprint.o stopwatch.o
+OBJS = queue.o lock.o packetsource.o generators.o crc32.o fingerprint.o
 CC = gcc
 CFLAGS = -g -Wall -Werror -O3
 LIBS = -lm -pthread
@@ -34,9 +34,6 @@ crc32.o: utils/crc32.c utils/crc32.h
 
 fingerprint.o: utils/fingerprint.c utils/fingerprint.h
 	$(CC) $(CFLAGS) -c utils/fingerprint.c
-
-stopwatch.o: utils/stopwatch.c utils/stopwatch.h
-	$(CC) $(CFLAGS) -c utils/stopwatch.c
 
 clean:
 	rm -f main test *.o *.txt *~ *#

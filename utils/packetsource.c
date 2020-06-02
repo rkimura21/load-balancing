@@ -64,6 +64,7 @@ void deletePacketSource(PacketSource_t * packetSource)
 	free(packetSource->uniformCounts);
 
 	free(packetSource->exponentialGen);
+	free(packetSource->exponentialSeed);
 	free(packetSource->exponentialCounts);
 
     free(packetSource);

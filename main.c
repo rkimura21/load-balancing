@@ -163,13 +163,13 @@ void parallelCounter(unsigned int n, char *L)
   FILE *fp = NULL;
   pthread_t *threads = malloc(n * sizeof(pthread_t));
   metadata_t *args = malloc(n * sizeof(metadata_t));
-  //counterLock = malloc(sizeof(locks_t));
+  counterLock = malloc(sizeof(locks_t));
   
   // set up appropriate lock
   if (strcmp(L, "tas") == 0) counterLock->tas = initTAS();
   else counterLock->anderson = initAnderson(power2Ceil(n));    
 
-  if (output == 8) { // for ordering test
+  if (output == 7) { // for ordering test
     snprintf(fileStr, sizeof(fileStr), "out_%s.txt", tests[output-1]);
     fp = fopen(fileStr, "a");
   }
@@ -179,6 +179,7 @@ void parallelCounter(unsigned int n, char *L)
     args[i].tid = i;
     args[i].inc = 0;
     args[i].fp = fp;
+    args[i].lockType = L;
     rc = pthread_create(&threads[i], NULL, counterRoutine, (void *)(args+i));
     if (rc) {
       fprintf(stderr, "%s: return code from pthread_create() is %d\n", prog, rc);
@@ -198,7 +199,7 @@ void parallelCounter(unsigned int n, char *L)
   // free lock
   if (strcmp(L, "tas") == 0) freeTAS(counterLock->tas);
   else freeAnderson(counterLock->anderson);
-  //free(counterLock);
+  free(counterLock);
 
   // output relevant information for specified counter-based test
   if (output != -1) {
@@ -215,8 +216,6 @@ void parallelCounter(unsigned int n, char *L)
       fputs(fileStr, fp);
     }
     break;
-  default:
-    if (verbose) printf("%s: no counter-based test was being run\n", prog);
   }
 
   if (verbose) {;
@@ -271,6 +270,7 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
   for (i = 0; i < n; i++)
     queueArr[i] = initQueue(D);
   for (i = 0; i < n; i++) {
+    locksArr[i] = malloc(sizeof(locks_t));
     if (strcmp(L, "tas") == 0) locksArr[i]->tas = initTAS();
     else locksArr[i]->anderson = initAnderson(power2Ceil(n));
   }
@@ -325,6 +325,7 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
   for (i = 0; i < n; i++) {
     if (strcmp(L, "tas") == 0) freeTAS(locksArr[i]->tas);
     if (strcmp(L, "anderson") == 0) freeAnderson(locksArr[i]->anderson);
+    free(locksArr[i]);
   }
   free(queueArr);
   free(locksArr);

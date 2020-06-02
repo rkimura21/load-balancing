@@ -73,16 +73,19 @@ int main(int argc, char *argv[])
   } else if (D < 1 || D % 2) {
     fprintf(stderr, "%s: D (queueDepth) must be a positive power of 2\n", prog);
     exit(1);
-  } else if ((t == 2 || t == 4 || t == 6 || t == 7) && (L == NULL || S == NULL)) {
-    fprintf(stderr, "%s: -L (lockType) and/or -S (strategy) values are missing\n", prog);
+  } else if ((t == 2 || t == 4) && S == NULL) {
+    fprintf(stderr, "%s: -S (strategy) value is missing\n", prog);
+    fprintf(stderr, okString, prog);
+    exit(1);
+  } else if ((t == 6 || t == 7) && L == NULL) {
+    fprintf(stderr, "%s: -L (lockType) value is missing\n", prog);
     fprintf(stderr, okString, prog);
     exit(1);
   } else if ((t == 2 || t== 4) && (strcmp(S, "lockFree") != 0 &&
 				   strcmp(S, "homeQueue") != 0 && strcmp(S, "awesome") != 0)) {
     fprintf(stderr, "%s: S (strategy) value must be 'lockFree', 'homeQueue', or 'awesome'\n", prog);
     exit(1);
-  } else if ((t == 6 || t == 7) && (strcmp(S, "homeQueue") == 0 || strcmp(S, "awesome") == 0) &&
-	     (strcmp(L, "tas") != 0 && strcmp(L, "anderson") != 0)) {
+  } else if ((t == 6 || t == 7) && (strcmp(L, "tas") != 0 && strcmp(L, "anderson") != 0)) {
     fprintf(stderr, "%s: L (lockType) value must be 'tas' or 'anderson'\n", prog);
     exit(1);
   } else if ((t >= 6 && t <= 8) && B < 1) {
@@ -186,7 +189,7 @@ void parallelTest(unsigned int n, long W, unsigned int T, int seed)
 	if (childPid == 0) {
 	  execlp("./main", "main", "-n", nStr, "-W", wStr, "-T", tStr, "-s", sStr,
 		 "-M", "2000", i == 0 ? "-u" : "", "-S", "lockFree", "-o", "1", j == 1 ? "-p" : "",
-		 verbose ? "-v" : "", (char *) NULL);
+		 "-L", "tas", verbose ? "-v" : "", (char *) NULL);
 	} else if (childPid < 0) {
 	  fprintf(stderr, "%s: fork failed!\n", prog); exit(1);
 	} else {
@@ -261,7 +264,7 @@ void strategyTest(unsigned int n, long W, unsigned int T, int seed, char *S)
 	  childPid = fork();
 	  if (childPid == 0) {
 	    execlp("./main", "main", "-n", nStr, "-W", wStr, "-T", tStr, "-s", sStr, "-M", "2000",
-		   "-S", i == 1 ? S : "lockFree", i == 0 ? "-u" : "", "-L", k == 0 ? "tas" :
+		   "-S", i == 1 ? S : "lockFree", j == 0 ? "-u" : "", "-L", k == 0 ? "tas" :
 		   "anderson", "-p", verbose ? "-v" : "", "-o", "2", (char *) NULL);
 	  } else if (childPid < 0) {
 	    fprintf(stderr, "%s: fork failed!\n", prog); exit(1);
@@ -288,7 +291,8 @@ void strategyTest(unsigned int n, long W, unsigned int T, int seed, char *S)
   } while (!feof(fp)) {
     if (fgets(fileStr, sizeof(fileStr), fp) != NULL) {
       sscanf(fileStr, "%ld", &pCount);
-      offset = (i / (4 * n)) * 4 * n + (i / (2 * n) % 2) * 2 * n + (i / n % 2) * n + (i % n);
+      // = arr[i/(4n)][i/(2n)%2]][i/n%2][i%n]
+      offset = ((i / (4 * n)) * 4 * n) + ((i / (2 * n) % 2) * 2 * n) + ((i / n % 2) * n) + (i % n);
       valsD[offset] = pCount;
       i++;
     }
