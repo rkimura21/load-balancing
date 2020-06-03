@@ -11,7 +11,7 @@
 
 volatile int doStop = 0;
 static unsigned int M;
-static long B;
+static long B, W;
 static int verbose;
 static int output;
 static char *prog;
@@ -33,7 +33,7 @@ int main(int argc, char *argv[])
   M = 2000, B = 0, count = 0;
   int i, c, err = 0;
   unsigned int n = 1, D = 8, T = 1;
-  long W = 1;
+  W = 1;
   int seed = 1, uniform = 0, parallel = 0;
   char *L = NULL, *S = NULL;
   FILE *fp = NULL;
@@ -273,7 +273,7 @@ void executeSerial(PacketSource_t *packetSource, unsigned int T, unsigned int n,
   }
 
   if (output >= 9 && output <= 12) {
-    snprintf(fileStr, sizeof(fileStr), "out_%s_s.txt", tests[output-1]);
+    snprintf(fileStr, sizeof(fileStr), "out_%s.txt", tests[output-1]);
     fp = fopen(fileStr, "a");
     sprintf(fileStr, "%ld\n", processed);
     fputs(fileStr, fp);
@@ -282,8 +282,8 @@ void executeSerial(PacketSource_t *packetSource, unsigned int T, unsigned int n,
   if (fp != NULL) fclose(fp);
   if (timer_delete(timer)) fprintf(stderr, "%s: timer unsuccessfully deleted\n", prog);
   if (verbose)
-    printf("%s: serial execution done, %ld of %u packets processed in %u msec\n",
-	   prog, processed, n * T, M);
+    printf("%s: serial execution done (W = %ld), %ld of %u packets processed in %u msec\n",
+	   prog, W, processed, n * T, M);
 }
 
 void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int n,
@@ -335,10 +335,10 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
     workerRoutine = &routineAwesome;
 
   if (output == 3) { // for timed parallel test
-    snprintf(fileStr, sizeof(fileStr), "out_%s_p.txt", tests[output-1]);
+    snprintf(fileStr, sizeof(fileStr), "out_%s.txt", tests[output-1]);
     fp = fopen(fileStr, "a");
   } else if (output == 4) { // for timed strategy test
-    snprintf(fileStr, sizeof(fileStr), "out_%s_%s.txt", tests[output-1], S);
+    snprintf(fileStr, sizeof(fileStr), "out_%s.txt", tests[output-1]);
     fp = fopen(fileStr, "a");
   }
 						
@@ -365,7 +365,7 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
   }
 
   // enqueue all threads
-  for (i = 0; i < n * T; i++) {
+  for (i = 0; i < n * T && !doStop; i++) {
     volatile Packet_t *nextPacket = (*get)(packetSource, i % n);
     while (! enqueue(queueArr[i % n], nextPacket)) { /* spin */ }
     if (verbose)
@@ -384,7 +384,7 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
   long processed = 0;
   for (i = 0; i < n; i++) processed += args[i].processed;
   if (output >= 9 && output <= 12) {
-    snprintf(fileStr, sizeof(fileStr), "out_%s_p.txt", tests[output-1]);
+    snprintf(fileStr, sizeof(fileStr), "out_%s.txt", tests[output-1]);
     fp = fopen(fileStr, "a");
     sprintf(fileStr, "%ld\n", processed);
     fputs(fileStr, fp);
@@ -406,9 +406,9 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
   free(args);
   free(threads);
   if (timer_delete(timer)) fprintf(stderr, "%s: timer unsuccessfully deleted\n", prog);
-  if (1)
-    printf("%s: parallel execution (L = %s, S = %s) done, %ld of %u packets processed in %u msec\n",
-	   prog, L, S, processed, n * T, M);
+  if (verbose)
+    printf("%s: parallel execution (L = %s, S = %s, W = %ld, n = %u) done, %ld of %u packets processed in %u msec\n",
+	   prog, L, S, W, n, processed, n * T, M);
 }
 
 void * routineLockFree(void *arg)
@@ -421,11 +421,8 @@ void * routineLockFree(void *arg)
   
   // dequeue and process packets
   for (i = 0; i < m->numPackets && !doStop; i++) {
-    if (doStop) { // free any remaining packets
-      while ((nextPacket = dequeue(queue))) free((void *)nextPacket);
-      break;
-    }
-    while (! (nextPacket = dequeue(queue))) { sched_yield(); }
+    while (!(nextPacket = dequeue(queue)) && !doStop) { sched_yield(); }
+    if (doStop) break;
     long checksum = getFingerprint(nextPacket->iterations, nextPacket->seed);
     m->processed++;
     if (output == 3 || output == 4) {
@@ -437,6 +434,8 @@ void * routineLockFree(void *arg)
     free((void *)nextPacket);
   }
 
+  // flush any remaining packets
+  while ((nextPacket = dequeue(queue))) free((void *)nextPacket);
   if (verbose) printf("in lockFree routine: worker %d exiting...\n", m->tid);
   __sync_fetch_and_sub(&active, 1);
   return NULL;
@@ -458,11 +457,12 @@ void * routineHomeQueue(void *arg)
     if (strcmp(lockType, "anderson") == 0) acquireAnderson(locksArr[m->tid]->anderson, &mySlot);
 
     // critcal section: dequeue
-    while (! (nextPacket = dequeue(queue))) { sched_yield(); }
-
+    while (!(nextPacket = dequeue(queue)) && !doStop) { sched_yield(); }
+    
     // release lock
     if (strcmp(lockType, "tas") == 0) releaseTAS(locksArr[m->tid]->tas);
     if (strcmp(lockType, "anderson") == 0) releaseAnderson(locksArr[m->tid]->anderson, mySlot);
+    if (doStop) break;
 
     long checksum = getFingerprint(nextPacket->iterations, nextPacket->seed);
     m->processed++;
@@ -476,7 +476,9 @@ void * routineHomeQueue(void *arg)
 			m->tid, i, checksum);
     free((void *)nextPacket);
   }
-  
+
+  // flush any remaining packets
+  while ((nextPacket = dequeue(queue))) free((void *)nextPacket);
   if (verbose) printf("in homeQueue routine: worker %d exiting...\n", m->tid);
   __sync_fetch_and_sub(&active, 1);
   return NULL;

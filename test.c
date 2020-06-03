@@ -125,7 +125,7 @@ int main(int argc, char *argv[])
   case 13:
     idleLockOverhead(r);
     uniexpSpeedup(r, 1);
-    uniexpSpeedup(r, 0);
+    uniexpSpeedup(11, 0);
     // awesomeSpeedup(r);
     break;
   default:
@@ -559,7 +559,7 @@ void idleLockOverhead(unsigned int r)
   pid_t childPid;
   char fileStr[128], trialNo[10];
   char *Ws[6] = { "25", "50", "100", "200", "400", "800" };
-  unsigned int T = 10000; 
+  unsigned int T = 100000000; 
   
   if (access("main", F_OK|X_OK)) {
     fprintf(stderr, "%s: 'main' file does not exist in current dir, or is not executable\n", prog);
@@ -598,7 +598,7 @@ void idleLockOverhead(unsigned int r)
   long throughput;
   long *valsD = malloc(24 * r * sizeof(long));
   long valsS[6][2][2][r]; // arr[W][L][S][r]
-  if ((fp = fopen("out_overhead_p.txt", "r")) == NULL) {
+  if ((fp = fopen("out_overhead.txt", "r")) == NULL) {
     fprintf(stderr, "%s: can't open out_overhead.txt\n", prog);
     exit(1);
   } while (!feof(fp)) {
@@ -616,7 +616,9 @@ void idleLockOverhead(unsigned int r)
       for (k = 0; k < 2; k++) // S
 	for (l = 0; l < r; l++) // r
       valsS[i][j][k][l] = valsD[i*4*r+j*2*r+k*r+l];
-
+  free(valsD);
+  fclose(fp);
+  
   long median[6][2][2];
   float speedup[6][2]; 
 
@@ -638,7 +640,7 @@ void idleLockOverhead(unsigned int r)
   printf("%s: Lock Scaling results (M = %u, T = %u, %u trials):\n", prog, M, T, r);	 
   for (i = 0; i < 6; i++)
     for (j = 0; j < 2; j++)
-      printf("%s lock speedup (W = %s): %ld / %ld = %f\n",
+      printf("%s lock speedup (W = %s): homeQueue / lockFree = %ld / %ld = %f\n",
 	     j == 0 ? "tas" : "anderson", Ws[i], median[i][j][1], median[i][j][0], speedup[i][j]);  
 }
 
@@ -650,8 +652,8 @@ void uniexpSpeedup(unsigned int r, int uniform)
   char fileStr[128], trialNo[10];
   char *Ws[4] = { "1000", "2000", "4000", "8000" };
   char *ns[6] = { "1", "2", "3", "7", "13", "27" };
-  unsigned int T = 10000;
-  char *fileName = uniform ? "out_speedupU.txt" : "out_speedupE";
+  unsigned int T = 100000000;
+  char *fileName = uniform ? "out_speedupU.txt" : "out_speedupE.txt";
 
   if (access("main", F_OK|X_OK)) {
     fprintf(stderr, "%s: 'main' file does not exist in current dir, or is not executable\n", prog);
@@ -727,6 +729,9 @@ void uniexpSpeedup(unsigned int r, int uniform)
       }
     }
   }
+
+  if (remove(fileName))
+    fprintf(stderr, "%s: unable to delete out_speedupU.txt/speedupE.txt\n", prog);
 
   if (access("main", F_OK|X_OK)) {
     fprintf(stderr, "%s: 'main' file does not exist in current dir, or is not executable\n", prog);
@@ -805,7 +810,7 @@ void uniexpSpeedup(unsigned int r, int uniform)
     for (j = 0; j < 6; j++)
       for (k = 0; k < 2; k++)
 	for (l = 0; l < 2; l++)
-	  printf("[W = %s, n = %s] <L, S> = <%s, %s> speedup: %ld / %ld = %f\n",
+	  printf("[W = %s, n = %s, L = %s, S = %s] speedup: parallel / serial = %ld / %ld = %f\n",
 		 Ws[i], ns[j], k == 0 ? "tas" : "anderson", l == 0 ? "lockFree" : "homeQueue",
 		 medianP[i][j][k][l], medianS[i][j], speedup[i][j][k][l]);
 }
