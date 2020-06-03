@@ -237,7 +237,7 @@ void executeSerial(PacketSource_t *packetSource, unsigned int T, unsigned int n,
 		   unsigned int M, volatile Packet_t* (*get)(PacketSource_t *, int))
 {
   int i, j;
-  FILE *fp= NULL;
+  FILE *fp = NULL;
   
   // create and set-up timer
   timer_t timer;
@@ -270,6 +270,13 @@ void executeSerial(PacketSource_t *packetSource, unsigned int T, unsigned int n,
       if (verbose) printf("source %d's checksum[%d] = %ld\n", j, i, checksum);
       free((void *)packet);
     }
+  }
+
+  if (output >= 9 && output <= 12) {
+    snprintf(fileStr, sizeof(fileStr), "out_%s_s.txt", tests[output-1]);
+    fp = fopen(fileStr, "a");
+    sprintf(fileStr, "%ld\n", processed);
+    fputs(fileStr, fp);
   }
 
   if (fp != NULL) fclose(fp);
@@ -358,7 +365,7 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
   }
 
   // enqueue all threads
-  for (i = 0; i < n * T && !doStop; i++) {
+  for (i = 0; i < n * T; i++) {
     volatile Packet_t *nextPacket = (*get)(packetSource, i % n);
     while (! enqueue(queueArr[i % n], nextPacket)) { /* spin */ }
     if (verbose)
@@ -376,7 +383,13 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
   // harvest worker data for total throughput
   long processed = 0;
   for (i = 0; i < n; i++) processed += args[i].processed;
-
+  if (output >= 9 && output <= 12) {
+    snprintf(fileStr, sizeof(fileStr), "out_%s_p.txt", tests[output-1]);
+    fp = fopen(fileStr, "a");
+    sprintf(fileStr, "%ld\n", processed);
+    fputs(fileStr, fp);
+  }
+  
   // free queues and locks
   for (i = 0; i < n; i++)
     freeQueue(queueArr[i]);
@@ -472,15 +485,16 @@ void * routineHomeQueue(void *arg)
 void * routineAwesome(void *arg)
 {
   metadata_t *m = (metadata_t *)arg;
-  int mru = rand() % m->numSources; // used for targeting victim queues
+  int mru = (m->tid + 1) % m->numSources; // used for targeting victim queues
   int mySlots[m->numSources]; // thread local; keep track of position in all anderson queues
   queue_t *myQueue = queueArr[m->tid];
   char *lockType = m->lockType;
   volatile Packet_t *nextPacket;
-  if (verbose) printf("in awesome routine: hello, this is worker %d\n", m->tid);
+  printf("in awesome routine: hello, this is worker %d\n", m->tid);
 
-  while (remaining && !doStop) {
+  while (remaining) {
     while (!isEmpty(myQueue)) {
+      printf("remaining = %ld\n", remaining);
       // acquire my lock
       if (strcmp(lockType, "tas") == 0) acquireTAS(locksArr[m->tid]->tas);
       if (strcmp(lockType, "anderson") == 0) acquireAnderson(locksArr[m->tid]->anderson, &mySlots[m->tid]);
@@ -502,12 +516,15 @@ void * routineAwesome(void *arg)
 	fputs(fileStr, m->fp);
       }
 
-      if (verbose) printf(" in awesome routine: worker %d computed own checksum[%d] = %ld\n",
-			  m->tid, m->packetProgress[m->tid], checksum);
+      printf(" in awesome routine: worker %d computed own checksum[%d] = %ld\n",
+			  m->tid, m->packetProgress[m->tid]-1, checksum);
       free((void *)nextPacket);    
     }
     
-    while (isEmpty(myQueue)) { // attempt to steal from another queue
+    while (isEmpty(myQueue) && remaining) { // attempt to steal from another queue
+      printf("remaining = %ld\n", remaining);
+      printf("in awesome routine: worker %d attempting to steal from worker %d\n",
+	     m->tid, mru);
       sched_yield();
       if (!isEmpty(queueArr[mru])) {
 	// acquire their lock
@@ -531,11 +548,11 @@ void * routineAwesome(void *arg)
 	  fputs(fileStr, m->fp);
 	}
 
-	if (verbose) printf(" in awesome routine: worker %d computed worker %d's checksum[%d] = %ld\n",
-			    m->tid, mru, m->packetProgress[mru], checksum);
+	printf(" in awesome routine: worker %d computed worker %d's checksum[%d] = %ld\n",
+			    m->tid, mru, m->packetProgress[mru]-1, checksum);
 	free((void *)nextPacket);
       }
-      else mru = rand() % m->numSources; // assign new target queue
+      else { do { mru = rand() % m->numSources; } while (mru == m->tid); } // assign new target queue
     }
   } 
   

@@ -10,13 +10,14 @@
 
 static int verbose;
 static char *prog;
+static unsigned int M;
 
 int main(int argc, char *argv[])
 {
   prog = argv[0];
   verbose = 0;
   int c, err = 0, t = -1, seed = 1;
-  unsigned int r = 1, n = 1, D = 8, T = 1, M = 2000;
+  unsigned int r = 1, n = 1, D = 8, T = 1; M = 2000;
   long W = 1, B = 1;
   char *L = NULL, *S = NULL;
   char usage[400] = "usage %s: -t <testNo> [-r <trialRuns>] [-M <numMillisecs>] [-n <numSources>] ";
@@ -116,16 +117,16 @@ int main(int argc, char *argv[])
   case 9:
     idleLockOverhead(r); break;
   case 10:
-    uniformSpeedup(r); break;
+    uniexpSpeedup(r, 1); break;
   case 11:
-    exponentialSpeedup(r); break;
+    uniexpSpeedup(r, 0); break;
   case 12:
     awesomeSpeedup(r); break;
   case 13:
     idleLockOverhead(r);
-    uniformSpeedup(r);
-    exponentialSpeedup(r);
-    awesomeSpeedup(r);
+    uniexpSpeedup(r, 1);
+    uniexpSpeedup(r, 0);
+    // awesomeSpeedup(r);
     break;
   default:
     fprintf(stderr, "%s: -t (testNo) must be between 1 and 13, inclusive\n", prog);
@@ -142,6 +143,13 @@ int main(int argc, char *argv[])
   return 0;
 }
 
+int longcmp(const void *a, const void *b)
+{
+  long la = *(long *)a;
+  long lb = *(long *)b;
+  return (la > lb) - (la < lb);
+}
+
 int floatcmp(const void *a, const void *b)
 {
   float fa = *(float *)a;
@@ -149,7 +157,15 @@ int floatcmp(const void *a, const void *b)
   return (fa > fb)  - (fa < fb);
 }
 
-float getMedian(float arr[], int n)
+long getMedianL(long arr[], int n)
+{
+  long median;
+  if (n %2) median = arr[n/2];
+  else median = (arr[(n-1)/2] + arr[n/2]) / 2;
+  return median;
+}
+
+float getMedianF(float arr[], int n)
 {
   float median;
   if (n % 2) median = arr[n/2];
@@ -181,14 +197,15 @@ void parallelTest(unsigned int n, long W, unsigned int T, int seed)
     fprintf(stderr, "%s: 'main' file does not exist in current dir, or is not executable\n", prog);
     exit(1);
   } else {
-    char nStr[10]; char wStr[10]; char tStr[10]; char sStr[10];
-    sprintf(nStr, "%u", n); sprintf(wStr, "%ld", W); sprintf(tStr, "%u", T); sprintf(sStr,"%d", seed);
+    char nStr[10]; char wStr[10]; char tStr[10]; char sStr[10]; char mStr[10];
+    sprintf(nStr, "%u", n); sprintf(wStr, "%ld", W); sprintf(tStr, "%u", T);
+    sprintf(sStr,"%d", seed); sprintf(mStr, "%u", M);
     for (i = 0; i < 2; i++) { // uniform or exponential
       for (j = 0; j < 2; j++) { // serial or parallel
 	childPid = fork();
 	if (childPid == 0) {
 	  execlp("./main", "main", "-n", nStr, "-W", wStr, "-T", tStr, "-s", sStr,
-		 "-M", "2000", i == 0 ? "-u" : "", "-S", "lockFree", "-o", "1", j == 1 ? "-p" : "",
+		 "-M", mStr, i == 0 ? "-u" : "", "-S", "lockFree", "-o", "1", j == 1 ? "-p" : "",
 		 "-L", "tas", verbose ? "-v" : "", (char *) NULL);
 	} else if (childPid < 0) {
 	  fprintf(stderr, "%s: fork failed!\n", prog); exit(1);
@@ -255,15 +272,15 @@ void strategyTest(unsigned int n, long W, unsigned int T, int seed, char *S)
     fprintf(stderr, "%s: 'main' file does not exist in current dir, or is not executable\n", prog);
     exit(1);
   } else {
-    char nStr[10]; char wStr[10]; char tStr[10]; char sStr[10];
+    char nStr[10]; char wStr[10]; char tStr[10]; char sStr[10]; char mStr[10];
     sprintf(nStr, "%u", n); sprintf(wStr, "%ld", W);
-    sprintf(tStr, "%u", T); sprintf(sStr,"%d", seed);
+    sprintf(tStr, "%u", T); sprintf(sStr,"%d", seed); sprintf(mStr, "%d", M);
     for (i = 0; i < 2; i++) { // strategy (lockFree or S)
       for (j = 0; j < 2; j++) { // distribution (uniform or exponential)
 	for (k = 0; k < 2; k++) { // lock type (tas or anderson)
 	  childPid = fork();
 	  if (childPid == 0) {
-	    execlp("./main", "main", "-n", nStr, "-W", wStr, "-T", tStr, "-s", sStr, "-M", "2000",
+	    execlp("./main", "main", "-n", nStr, "-W", wStr, "-T", tStr, "-s", sStr, "-M", mStr,
 		   "-S", i == 1 ? S : "lockFree", j == 0 ? "-u" : "", "-L", k == 0 ? "tas" :
 		   "anderson", "-p", verbose ? "-v" : "", "-o", "2", (char *) NULL);
 	  } else if (childPid < 0) {
@@ -442,7 +459,7 @@ void contiguityTest(long B, int n, char *L)
       }
     }
   }
-
+  
   // verify monotonic increase of increment operations
   if ((fp = fopen("out_contiguity.txt", "r")) == NULL) {
     fprintf(stderr, "%s: can't open out_contiguity.txt\n", prog);
@@ -537,15 +554,262 @@ void orderingTest(long B, int n)
 
 void idleLockOverhead(unsigned int r)
 {
+  int i, j, k, l;
+  FILE *fp;
+  pid_t childPid;
+  char fileStr[128], trialNo[10];
+  char *Ws[6] = { "25", "50", "100", "200", "400", "800" };
+  unsigned int T = 10000; 
+  
+  if (access("main", F_OK|X_OK)) {
+    fprintf(stderr, "%s: 'main' file does not exist in current dir, or is not executable\n", prog);
+  } else {
+    if (verbose) printf("%s: Running %u trials of 'Idle Lock Overhead'...\n", prog, r);
+    char mStr[10]; sprintf(mStr, "%u", M);
+    char tStr[10]; sprintf(tStr, "%u", T);
+    for (i = 0; i < r; i++) { // per trial
+      sprintf(trialNo, "%d", r);
+      for (j = 0; j < 6; j++) { // per W
+	for (k = 0; k < 2; k++) { // per strategy
+	  for (l = 0; l < 2; l++) { // per lock
+	    childPid = fork();
+	    if (childPid == 0) {
+	      execlp("./main", "main", "-M", mStr, "-n", "1", "-L", l == 0 ? "tas" : "anderson",
+		     "-S", k == 0 ? "lockFree" : "homeQueue", "-T", tStr, "-s", trialNo, "-u", "-p",
+		     "-W", Ws[j], "-o", "9", (char *) NULL);
+	    } else if (childPid < 0) {
+	      fprintf(stderr, "%s: fork failed!\n", prog); exit(-1);
+	    } else {
+	      int rc;
+	      waitpid(childPid, &rc, 0);
+	      // if (rc == 0 && verbose) printf("%s: child process terminated successfully!\n", prog);
+	      if (rc == 1) {
+		fprintf(stderr, "%s: child process terminated with an error!\n", prog); exit(-1);
+	      }
+	    }
+	  }
+	}
+      }
+    }
+  }
+
+  // compute median parallel throughputs
+  int offset = 0; i = 0;
+  long throughput;
+  long *valsD = malloc(24 * r * sizeof(long));
+  long valsS[6][2][2][r]; // arr[W][L][S][r]
+  if ((fp = fopen("out_overhead_p.txt", "r")) == NULL) {
+    fprintf(stderr, "%s: can't open out_overhead.txt\n", prog);
+    exit(1);
+  } while (!feof(fp)) {
+    if (fgets(fileStr, sizeof(fileStr), fp) != NULL) {
+      sscanf(fileStr, "%ld", &throughput);
+      offset = ((i / 4 % 6) * 4 * r) + ((i % 2) * 2 * r) + ((i / 2 % 2) * r) + (i / 24); 
+      // = arr[i/4%6][i%2][i/2%2][i/24]
+      valsD[offset] = throughput;
+      i++;
+    }
+  }
+
+  for (i = 0; i < 6; i++) // W
+    for (j = 0; j < 2; j++) // L
+      for (k = 0; k < 2; k++) // S
+	for (l = 0; l < r; l++) // r
+      valsS[i][j][k][l] = valsD[i*4*r+j*2*r+k*r+l];
+
+  long median[6][2][2];
+  float speedup[6][2]; 
+
+  for (i = 0; i < 6; i++) { // W
+    for (j = 0; j < 2; j++) { // L
+      for (k = 0; k < 2; k++) { // S
+	qsort(valsS[i][j][k], r, sizeof(long), longcmp);
+	median[i][j][k] = getMedianL(valsS[i][j][k], r);
+      }
+    }
+  }
+
+  for (i = 0; i < 6; i++) // W
+    for (j = 0; j < 2; j++) // L
+      speedup[i][j] = median[i][j][1] / (float) median[i][j][0];
+
+  if (remove("out_overhead.txt"))
+    fprintf(stderr, "%s: unable to delete out_overhead.txt\n", prog);
+  printf("%s: Lock Scaling results (M = %u, T = %u, %u trials):\n", prog, M, T, r);	 
+  for (i = 0; i < 6; i++)
+    for (j = 0; j < 2; j++)
+      printf("%s lock speedup (W = %s): %ld / %ld = %f\n",
+	     j == 0 ? "tas" : "anderson", Ws[i], median[i][j][1], median[i][j][0], speedup[i][j]);  
 }
 
-void uniformSpeedup(unsigned int r)
+void uniexpSpeedup(unsigned int r, int uniform)
 {
+  int i, j, k, l, h;
+  FILE *fp;
+  pid_t childPid;
+  char fileStr[128], trialNo[10];
+  char *Ws[4] = { "1000", "2000", "4000", "8000" };
+  char *ns[6] = { "1", "2", "3", "7", "13", "27" };
+  unsigned int T = 10000;
+  char *fileName = uniform ? "out_speedupU.txt" : "out_speedupE";
+
+  if (access("main", F_OK|X_OK)) {
+    fprintf(stderr, "%s: 'main' file does not exist in current dir, or is not executable\n", prog);
+  } else {
+    if (verbose) printf("%s: Running %u trials of '%s Speedup'...\n",
+			prog, r, uniform ? "Uniform" : "Exponential");
+    char mStr[10]; sprintf(mStr, "%u", M);
+    char tStr[10]; sprintf(tStr, "%u", T);
+    for (i = 0; i < r; i++) { // per trial
+      sprintf(trialNo, "%d", r);
+      for (j = 0; j < 4; j++) { // per W
+	for (k = 0; k < 6; k++) { // per n
+	  for (l = 0; l < 2; l++) { // per strategy
+	    for (h = 0; h < 2; h++) { // per lock
+	      childPid = fork();
+	      if (childPid == 0) {
+		execlp("./main", "main", "-M", mStr, "-n", ns[k], "-L", l == 0 ? "tas" : "anderson",
+		       "-S", h == 0 ? "lockFree" : "homeQueue", "-T", tStr, "-s", trialNo,
+		       uniform ? "-u" : "", "-p", "-W", Ws[j], "-o", uniform ? "10" : "11", (char *) NULL);
+	      } else if (childPid < 0) {
+		fprintf(stderr, "%s: fork failed!\n", prog); exit(-1);
+	      } else {
+		int rc;
+		waitpid(childPid, &rc, 0);
+		// if (rc == 0 && verbose) printf("%s: child process terminated successfully!\n", prog);
+		if (rc == 1) {
+		  fprintf(stderr, "%s: child process terminated with an error!\n", prog); exit(-1);
+		}
+	      }
+	    }
+	  }
+	}
+      }
+    }
+  }
+
+  // compute median parallel throughputs
+  int offset = 0; i = 0;
+  long throughput;
+  long *valsD = malloc(96 * r * sizeof(long));
+  long valsS[4][6][2][2][r]; // arr[W][n][L][S][r]
+  if ((fp = fopen(fileName, "r")) == NULL) {
+    fprintf(stderr, "%s: can't open out_speedupU.txt/out_speedupE.txt\n", prog);
+    exit(1);
+  } while (!feof(fp)) {
+    if (fgets(fileStr, sizeof(fileStr), fp) != NULL) {
+      sscanf(fileStr, "%ld", &throughput);
+      offset = ((i / 24 % 4) * r * 24) + ((i / 4 % 6) * r * 4) + ((i / 2 % 2) * r * 2) + ((i % 2) * r) + (i / 96);
+      // = arr[i/24%4][i/4%6][i/2%2][i%2][i/96]
+      valsD[offset] = throughput;
+      i++;
+    }
+  }
+
+  for (i = 0; i < 4; i++) // W
+    for (j = 0; j < 6; j++) // n
+      for (k = 0; k < 2; k++) // L
+	for (l = 0; l < 2; l++) // S
+	  for (h = 0; h < r; h++) // r
+	    valsS[i][j][k][l][h] = valsD[i*r*24+j*r*4+k*r*2+l*r+h];    
+  free(valsD);
+  
+  long medianP[4][6][2][2];
+  float speedup[4][6][2][2];
+
+  for (i = 0; i < 4; i++) { // W
+    for (j = 0; j < 6; j++) { // n
+      for (k = 0; k < 2; k++) { // L
+	for (l = 0; l < 2; l++) { // S 
+	  qsort(valsS[i][j][k][l], r, sizeof(long), longcmp);
+	  medianP[i][j][k][l] = getMedianL(valsS[i][j][k][l], r);
+	}
+      }
+    }
+  }
+
+  if (access("main", F_OK|X_OK)) {
+    fprintf(stderr, "%s: 'main' file does not exist in current dir, or is not executable\n", prog);
+  } else {
+    if (verbose) printf("%s: Running %u trials of '%s Speedup'...\n",
+			prog, r, uniform ? "Uniform" : "Exponential");
+    char mStr[10]; sprintf(mStr, "%u", M);
+    char tStr[10]; sprintf(tStr, "%u", T);
+    for (i = 0; i < r; i++) { // per trial
+      sprintf(trialNo, "%d", r);
+      for (j = 0; j < 4; j++) { // per W
+	for (k = 0; k < 6; k++) { // per n
+	  childPid = fork();
+	  if (childPid == 0) {
+	    execlp("./main", "main", "-M", mStr, "-n", ns[k], "-L", "tas", "-S", "lockFree",
+		   "-T", tStr, "-s", trialNo, uniform ? "-u" : "", "-W", Ws[j],
+		   "-o", uniform ? "10" : "11", (char *) NULL);
+	  } else if (childPid < 0) {
+	    fprintf(stderr, "%s: fork failed!\n", prog); exit(-1);
+	  } else {
+	    int rc;
+	    waitpid(childPid, &rc, 0);
+	    // if (rc == 0 && verbose) printf("%s: child process terminated successfully!\n", prog);
+	    if (rc == 1) {
+	      fprintf(stderr, "%s: child process terminated with an error!\n", prog); exit(-1);
+	    }
+	  }
+	}
+      }
+    }
+  }
+
+  // compute median serial throughputs
+  offset = 0; i = 0;
+  long *valsD2 = malloc(24 * r * sizeof(long));
+  long valsS2[4][6][r]; // arr[W][n][r]
+  if ((fp = fopen(fileName, "r")) == NULL) {
+    fprintf(stderr, "%s: can't open out_speedupU.txt/out_speedupE.txt\n", prog);
+    exit(1);
+  } while (!feof(fp)) {
+    if (fgets(fileStr, sizeof(fileStr), fp) != NULL) {
+      sscanf(fileStr, "%ld", &throughput);
+      offset = ((i / 6 % 4) * 6 * r) + ((i % 6) * r) + (i / 24); // = arr[i/6%4][i%6][i/24]
+      valsD[offset] = throughput;
+      i++;
+    }
+  }
+    
+  for (i = 0; i < 4; i++) // W
+    for (j = 0; j < 6; j++) // n
+      for (k = 0; k < r; k++) // r
+	valsS2[i][j][k] = valsD2[i*6*r+j*r+k];
+  free(valsD2);
+  
+  long medianS[4][6];
+  
+  for (i = 0; i < 4; i++) {
+    for (j = 0; j < 6; j++) {
+      qsort(valsS2[i][j], r, sizeof(long), longcmp);
+      medianS[i][j] = getMedianL(valsS2[i][j], r);
+    }
+  }
+
+  // compute speedups
+  for (i = 0; i < 4; i++) // W
+    for (j = 0; j < 6; j++) // n
+      for (k = 0; k < 2; k++)  // L
+	for (l = 0; l < 2; l++) // S
+	  speedup[i][j][k][l] = medianP[i][j][k][l] / (float) medianS[i][j];
+  
+  if (remove(fileName))
+    fprintf(stderr, "%s: unable to delete out_speedupU.txt/speedupE.txt\n", prog);
+  printf("%s: %s Speedup results (M = %u, T = %u, %u trials):\n",
+	 prog, uniform ? "Uniform" : "Exponential", M, T, r);
+  for (i = 0; i < 4; i++)
+    for (j = 0; j < 6; j++)
+      for (k = 0; k < 2; k++)
+	for (l = 0; l < 2; l++)
+	  printf("[W = %s, n = %s] <L, S> = <%s, %s> speedup: %ld / %ld = %f\n",
+		 Ws[i], ns[j], k == 0 ? "tas" : "anderson", l == 0 ? "lockFree" : "homeQueue",
+		 medianP[i][j][k][l], medianS[i][j], speedup[i][j][k][l]);
 }
 
-void exponentialSpeedup(unsigned int r)
-{
-}
 
 void awesomeSpeedup(unsigned int r)
 {
