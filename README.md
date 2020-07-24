@@ -22,9 +22,9 @@ Note that the efficiency/speedup of parallelizing work distribution/processing s
 
 ## Sample Output
 
-![Contiguity Test Output](sample_output1.jpg)
+![Contiguity Test Output](img/sample_output1.jpg)
 
-![IdleLockOverhead Test Output](sample_output2.jpg)
+![IdleLockOverhead Test Output](img/sample_output2.jpg)
 
 ## Known Bugs
 

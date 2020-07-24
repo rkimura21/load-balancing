@@ -11,29 +11,29 @@ main: main.o $(OBJS)
 test: test.o $(OBJS)
 	$(CC) $(CFLAGS) -o test test.o $(OBJS) $(LIBS)
 
-main.o: main.c main.h queue.h lock.h
-	$(CC) $(CFLAGS) -c main.c
+main.o: src/main.c src/main.h src/queue.h src/lock.h
+	$(CC) $(CFLAGS) -c src/main.c
 
-test.o: test.c test.h
-	$(CC) $(CFLAGS) -c test.c
+test.o: src/test.c src/test.h
+	$(CC) $(CFLAGS) -c src/test.c
 
-queue.o: queue.c queue.h utils/packetsource.h
-	$(CC) $(CFLAGS) -c queue.c
+queue.o: src/queue.c src/queue.h src/utils/packetsource.h
+	$(CC) $(CFLAGS) -c src/queue.c
 
-lock.o: lock.c lock.h utils/paddedprim.h
-	$(CC) $(CFLAGS) -c lock.c
+lock.o: src/lock.c src/lock.h src/utils/paddedprim.h
+	$(CC) $(CFLAGS) -c src/lock.c
 
-packetsource.o: utils/packetsource.c utils/packetsource.h
-	$(CC) $(CFLAGS) -c utils/packetsource.c
+packetsource.o: src/utils/packetsource.c src/utils/packetsource.h
+	$(CC) $(CFLAGS) -c src/utils/packetsource.c
 
-generators.o: utils/generators.c utils/generators.h
-	$(CC) $(CFLAGS) -c utils/generators.c
+generators.o: src/utils/generators.c src/utils/generators.h
+	$(CC) $(CFLAGS) -c src/utils/generators.c
 
-crc32.o: utils/crc32.c utils/crc32.h
-	$(CC) $(CFLAGS) -c utils/crc32.c
+crc32.o: src/utils/crc32.c src/utils/crc32.h
+	$(CC) $(CFLAGS) -c src/utils/crc32.c
 
-fingerprint.o: utils/fingerprint.c utils/fingerprint.h
-	$(CC) $(CFLAGS) -c utils/fingerprint.c
+fingerprint.o: src/utils/fingerprint.c src/utils/fingerprint.h
+	$(CC) $(CFLAGS) -c src/utils/fingerprint.c
 
 clean:
 	rm -f main test *.o *.txt *~ *#
