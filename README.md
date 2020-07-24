@@ -1,4 +1,4 @@
-# Packet Distribution Load Balancer
+# Packet-Filtering Firewall Emulator
 
 Load balancing of packet distribution system that emulates a packet-filtering firewall.
 
