@@ -18,7 +18,7 @@ int main(int argc, char *argv[])
   verbose = 0;
   int c, err = 0, t = -1, seed = 1, help = 0;
   unsigned int r = 1, n = 1, D = 8, T = 1; M = 2000;
-  long W = 1, B = 1;
+  long W = 1, B = 1000;
   char *L = NULL, *S = NULL;
   char usage[400] = "usage %s: -t <testNo> [-r <trialRuns>] [-M <numMillisecs>] [-n <numSources>] ";
   strcat(usage, "[-W <mean>] [-L <lockType>] [-S <strategy>] [-T <numPackets>] [-D <queueDepth>] ");
