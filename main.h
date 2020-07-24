@@ -29,7 +29,7 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
 		     volatile Packet_t* (*get)(PacketSource_t *, int));
 void * routineLockFree(void *arg);
 void * routineHomeQueue(void *arg);
-void * routineAwesome(void *arg);
+void * routineWorkSteal(void *arg);
 void * counterRoutine(void *arg);
 
 #endif

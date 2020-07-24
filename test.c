@@ -16,18 +16,18 @@ int main(int argc, char *argv[])
 {
   prog = argv[0];
   verbose = 0;
-  int c, err = 0, t = -1, seed = 1;
+  int c, err = 0, t = -1, seed = 1, help = 0;
   unsigned int r = 1, n = 1, D = 8, T = 1; M = 2000;
   long W = 1, B = 1;
   char *L = NULL, *S = NULL;
   char usage[400] = "usage %s: -t <testNo> [-r <trialRuns>] [-M <numMillisecs>] [-n <numSources>] ";
   strcat(usage, "[-W <mean>] [-L <lockType>] [-S <strategy>] [-T <numPackets>] [-D <queueDepth>] ");
-  strcat(usage, "[-s <seed>] [-B <big>] [-v]\n");
+  strcat(usage, "[-s <seed>] [-B <big>] [-v] [-h]\n");
   char okString[200] = "lockType = { 'tas', 'anderson' } ";
-  strcat(okString, "strategy = { 'lockFree', 'homeQueue', 'awesome' }\n");
+  strcat(okString, "strategy = { 'lockFree', 'homeQueue', 'workSteal' }\n");
   
   // retrieve command-line arguments
-  while ((c = getopt(argc, argv, "M:n:W:s:D:L:S:T:B:r:t:v")) != -1)
+  while ((c = getopt(argc, argv, "M:n:W:s:D:L:S:T:B:r:t:vh")) != -1)
     switch(c) {
     case 'M':
       sscanf(optarg, "%u", &M); break;
@@ -53,14 +53,18 @@ int main(int argc, char *argv[])
       sscanf(optarg, "%d", &t); break; 
     case 'v':
       verbose = 1; break;
+    case 'h':
+      help = 1; break;
     case '?':
       err = 1; break;
     }
 
   // handle malformed or incorrect command-line arguments
-  if (r < 1) {
-    fprintf(stderr, "%s: r (trialRuns) must be greater than 0\n", prog);
+  if (help) {
     fprintf(stderr, usage, prog);
+    exit(1);
+  } else if (r < 1) {
+    fprintf(stderr, "%s: r (trialRuns) must be greater than 0\n", prog);
     exit(1);
   } else if (n < 1 || n > MAX_THREAD) {
     fprintf(stderr, "%s: n (numSources) must be greater than 0 and less than/equal to 64\n", prog);
@@ -83,8 +87,8 @@ int main(int argc, char *argv[])
     fprintf(stderr, okString, prog);
     exit(1);
   } else if ((t == 2 || t== 4) && (strcmp(S, "lockFree") != 0 &&
-				   strcmp(S, "homeQueue") != 0 && strcmp(S, "awesome") != 0)) {
-    fprintf(stderr, "%s: S (strategy) value must be 'lockFree', 'homeQueue', or 'awesome'\n", prog);
+				   strcmp(S, "homeQueue") != 0 && strcmp(S, "workSteal") != 0)) {
+    fprintf(stderr, "%s: S (strategy) value must be 'lockFree', 'homeQueue', or 'workSteal'\n", prog);
     exit(1);
   } else if ((t == 6 || t == 7) && (strcmp(L, "tas") != 0 && strcmp(L, "anderson") != 0)) {
     fprintf(stderr, "%s: L (lockType) value must be 'tas' or 'anderson'\n", prog);
@@ -121,12 +125,12 @@ int main(int argc, char *argv[])
   case 11:
     uniexpSpeedup(r, 0); break;
   case 12:
-    awesomeSpeedup(r); break;
+    workStealSpeedup(r); break;
   case 13:
     idleLockOverhead(r);
     uniexpSpeedup(r, 1);
-    uniexpSpeedup(11, 0);
-    // awesomeSpeedup(r);
+    uniexpSpeedup(r, 0);
+    // workStealSpeedup(r);
     break;
   default:
     fprintf(stderr, "%s: -t (testNo) must be between 1 and 13, inclusive\n", prog);
@@ -136,7 +140,8 @@ int main(int argc, char *argv[])
     fprintf(stderr, "6 = countingTest(B, n, L)\n7 = contiguityTest(B, n, L)\n");
     fprintf(stderr, "8 = orderingTest(B, n)\n9 = idleLockOverhead(r)\n");
     fprintf(stderr, "10 = uniformSpeedup(r)\n11 = exponentialSpeedup(r)\n");
-    fprintf(stderr, "12 = awesomeSpeedup(r)\n13 = run all experiments\n");
+    fprintf(stderr, "12 = workStealSpeedup(r)\n13 = run all experiments\n");
+    fprintf(stderr, "Run with the '-h' argument to see usage message.\n"),
     exit(1);
   }
     
@@ -637,7 +642,7 @@ void idleLockOverhead(unsigned int r)
 
   if (remove("out_overhead.txt"))
     fprintf(stderr, "%s: unable to delete out_overhead.txt\n", prog);
-  printf("%s: Lock Scaling results (M = %u, T = %u, %u trials):\n", prog, M, T, r);	 
+  printf("%s: Lock Scaling results (M = %u, T = %u, %u trial(s)):\n", prog, M, T, r);	 
   for (i = 0; i < 6; i++)
     for (j = 0; j < 2; j++)
       printf("%s lock speedup (W = %s): homeQueue / lockFree = %ld / %ld = %f\n",
@@ -804,7 +809,7 @@ void uniexpSpeedup(unsigned int r, int uniform)
   
   if (remove(fileName))
     fprintf(stderr, "%s: unable to delete out_speedupU.txt/speedupE.txt\n", prog);
-  printf("%s: %s Speedup results (M = %u, T = %u, %u trials):\n",
+  printf("%s: %s Speedup results (M = %u, T = %u, %u trial(s)):\n",
 	 prog, uniform ? "Uniform" : "Exponential", M, T, r);
   for (i = 0; i < 4; i++)
     for (j = 0; j < 6; j++)
@@ -816,6 +821,6 @@ void uniexpSpeedup(unsigned int r, int uniform)
 }
 
 
-void awesomeSpeedup(unsigned int r)
+void workStealSpeedup(unsigned int r)
 {
 }

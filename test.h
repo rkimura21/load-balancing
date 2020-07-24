@@ -27,6 +27,6 @@ void orderingTest(long B, int n);
 // experiments
 void idleLockOverhead(unsigned int r);
 void uniexpSpeedup(unsigned int r, int uniform);
-void awesomeSpeedup(unsigned int r);
+void workStealSpeedup(unsigned int r);
 
 #endif

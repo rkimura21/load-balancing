@@ -1,7 +1,7 @@
 OBJS = queue.o lock.o packetsource.o generators.o crc32.o fingerprint.o
 CC = gcc
 CFLAGS = -g -Wall -Werror -O3
-LIBS = -lm -pthread
+LIBS = -lm -lrt -pthread
 
 all: main test
 

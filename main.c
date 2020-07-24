@@ -281,7 +281,7 @@ void executeSerial(PacketSource_t *packetSource, unsigned int T, unsigned int n,
 
   if (fp != NULL) fclose(fp);
   if (timer_delete(timer)) fprintf(stderr, "%s: timer unsuccessfully deleted\n", prog);
-  if (verbose)
+  if (verbose || !output)
     printf("%s: serial execution done (W = %ld), %ld of %u packets processed in %u msec\n",
 	   prog, W, processed, n * T, M);
 }
@@ -332,7 +332,7 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
   else if (strcmp(S, "homeQueue") == 0)
     workerRoutine = &routineHomeQueue;
   else
-    workerRoutine = &routineAwesome;
+    workerRoutine = &routineWorkSteal;
 
   if (output == 3) { // for timed parallel test
     snprintf(fileStr, sizeof(fileStr), "out_%s.txt", tests[output-1]);
@@ -406,7 +406,7 @@ void executeParallel(PacketSource_t *packetSource, unsigned int T, unsigned int 
   free(args);
   free(threads);
   if (timer_delete(timer)) fprintf(stderr, "%s: timer unsuccessfully deleted\n", prog);
-  if (verbose)
+  if (verbose || !output)
     printf("%s: parallel execution (L = %s, S = %s, W = %ld, n = %u) done, %ld of %u packets processed in %u msec\n",
 	   prog, L, S, W, n, processed, n * T, M);
 }
@@ -484,7 +484,7 @@ void * routineHomeQueue(void *arg)
   return NULL;
 }
 
-void * routineAwesome(void *arg)
+void * routineWorkSteal(void *arg)
 {
   metadata_t *m = (metadata_t *)arg;
   int mru = (m->tid + 1) % m->numSources; // used for targeting victim queues
@@ -492,14 +492,15 @@ void * routineAwesome(void *arg)
   queue_t *myQueue = queueArr[m->tid];
   char *lockType = m->lockType;
   volatile Packet_t *nextPacket;
-  printf("in awesome routine: hello, this is worker %d\n", m->tid);
+  printf("in workSteal routine: hello, this is worker %d\n", m->tid);
 
   while (remaining) {
     while (!isEmpty(myQueue)) {
       printf("remaining = %ld\n", remaining);
       // acquire my lock
       if (strcmp(lockType, "tas") == 0) acquireTAS(locksArr[m->tid]->tas);
-      if (strcmp(lockType, "anderson") == 0) acquireAnderson(locksArr[m->tid]->anderson, &mySlots[m->tid]);
+      if (strcmp(lockType, "anderson") == 0)
+	acquireAnderson(locksArr[m->tid]->anderson, &mySlots[m->tid]);
 
       // my critcal section: dequeue
       while (! (nextPacket = dequeue(myQueue))) { sched_yield(); }
@@ -518,14 +519,14 @@ void * routineAwesome(void *arg)
 	fputs(fileStr, m->fp);
       }
 
-      printf(" in awesome routine: worker %d computed own checksum[%d] = %ld\n",
+      printf(" in workSteal routine: worker %d computed own checksum[%d] = %ld\n",
 			  m->tid, m->packetProgress[m->tid]-1, checksum);
       free((void *)nextPacket);    
     }
     
     while (isEmpty(myQueue) && remaining) { // attempt to steal from another queue
       printf("remaining = %ld\n", remaining);
-      printf("in awesome routine: worker %d attempting to steal from worker %d\n",
+      printf("in workSteal routine: worker %d attempting to steal from worker %d\n",
 	     m->tid, mru);
       sched_yield();
       if (!isEmpty(queueArr[mru])) {
@@ -550,7 +551,7 @@ void * routineAwesome(void *arg)
 	  fputs(fileStr, m->fp);
 	}
 
-	printf(" in awesome routine: worker %d computed worker %d's checksum[%d] = %ld\n",
+	printf(" in workSteal routine: worker %d computed worker %d's checksum[%d] = %ld\n",
 			    m->tid, mru, m->packetProgress[mru]-1, checksum);
 	free((void *)nextPacket);
       }
@@ -558,7 +559,7 @@ void * routineAwesome(void *arg)
     }
   } 
   
-  if (verbose) printf("in awesome routine: worker %d exiting...\n", m->tid);
+  if (verbose) printf("in workSteal routine: worker %d exiting...\n", m->tid);
   __sync_fetch_and_sub(&active, 1);
   return NULL;
 }
