@@ -4,7 +4,7 @@ Load balancing of packet distribution system that emulates a packet-filtering fi
 
 ## Background
 
-This is some text. Talk about different strategies, locks, workload (i.e. what the different parameters are). Talk about the different tests and experiments.
+This is some text. Talk about different strategies, locks, workload (i.e. what the different parameters are). Talk about the different tests and experiments!
 
 ## Setup and Usage
 
